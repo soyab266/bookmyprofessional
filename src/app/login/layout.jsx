@@ -1,4 +1,4 @@
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://bookmyprofessional.com";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessional.com";
 
 // Minimal layout — per-variant metadata (title, description, canonical, robots)
 // is handled by generateMetadata in login/page.jsx.
