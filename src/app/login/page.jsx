@@ -91,4 +91,3 @@ export async function generateMetadata({ searchParams }) {
 export default function LoginPage() {
   return <LoginClient />;
 }
-
