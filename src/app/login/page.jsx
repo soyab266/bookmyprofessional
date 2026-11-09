@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 import LoginClient from "./LoginClient";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://bookmyprofessional.com";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessional.com";
 const OG_IMG   = `${SITE_URL}/og-image.png`;
 const SITE_NAME = "Book My Professional";
 

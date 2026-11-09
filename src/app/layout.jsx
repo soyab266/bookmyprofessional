@@ -29,7 +29,7 @@ const caveat = Caveat({
   weight: ["600", "700"],
 });
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://bookmyprofessional.com";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessional.com";
 
 const SITE_NAME = "Book My Professional";
 const SITE_TITLE = "Book My Professional | Connect with Top Experts Instantly";
