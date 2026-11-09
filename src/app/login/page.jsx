@@ -13,7 +13,7 @@ const OG_IMG   = `${SITE_URL}/og-image.png`;
 const SITE_NAME = "Book My Professional";
 
 export async function generateMetadata({ searchParams }) {
-  const role = searchParams?.role;
+  const { role } = await searchParams;
 
   // Authentication utility pages are intentionally excluded from organic indexing (noindex, follow)
   // Canonical always points to the clean canonical route /login
@@ -91,3 +91,4 @@ export async function generateMetadata({ searchParams }) {
 export default function LoginPage() {
   return <LoginClient />;
 }
+
