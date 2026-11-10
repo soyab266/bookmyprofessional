@@ -70,7 +70,7 @@ export default function ContactPage() {
       email: "hq@bookmyprofessional.com",
       transit: "Metro Bandra Kurla Complex (Line 3) – 2 min walk",
       parking: "Basement parking available at BKC",
-      hours: "Mon – Fri: 09:00 – 20:00 IST",
+      hours: "Mon – Sat: 09:00 – 20:00 IST",
     },
     {
       id: "delhi",
@@ -81,7 +81,7 @@ export default function ContactPage() {
       email: "delhi@bookmyprofessional.com",
       transit: "Metro Connaught Place (Blue Line) – 3 min walk",
       parking: "Paid parking at Palika Parking (5 min walk)",
-      hours: "Mon – Fri: 09:00 – 18:00 IST",
+      hours: "Mon – Sat: 09:00 – 20:00 IST",
     },
     {
       id: "hyderabad",
@@ -92,7 +92,7 @@ export default function ContactPage() {
       email: "hyderabad@bookmyprofessional.com",
       transit: "Metro Banjara Hills (Line 1) – direct station exit",
       parking: "Basement parking, Banjara Hills",
-      hours: "Mon – Fri: 09:30 – 18:30 IST",
+      hours: "Mon – Sat: 09:00 – 20:00 IST",
     },
     {
       id: "bangalore",
@@ -103,7 +103,7 @@ export default function ContactPage() {
       email: "bangalore@bookmyprofessional.com",
       transit: "Metro MG Road (Purple Line) – 4 min walk",
       parking: "Paid parking, MG Road",
-      hours: "Mon – Fri: 09:00 – 18:00 IST",
+      hours: "Mon – Sat: 09:00 – 20:00 IST",
     },
   ];
 
@@ -114,7 +114,7 @@ export default function ContactPage() {
       icon: Phone,
       title: "Direct Phone & WhatsApp",
       details: "+91 89193 28705",
-      subtext: "Mon – Sat, 8:00 AM – 8:00 PM IST",
+      subtext: "Mon – Sat, 9:00 AM – 8:00 PM IST",
       badge: "Quick Response",
       actionText: "Call Now",
       href: "tel:+918919328705",
@@ -467,16 +467,12 @@ export default function ContactPage() {
 
                   <div className="space-y-2.5 text-xs text-dark-700 pt-2 border-t border-border">
                     <div className="flex justify-between">
-                      <span className="font-medium">Monday – Friday</span>
+                      <span className="font-medium">Monday – Saturday</span>
                       <span className="font-semibold text-dark-900">09:00 – 20:00 IST</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="font-medium">Saturday</span>
-                      <span className="font-semibold text-dark-900">09:00 – 18:00 IST</span>
-                    </div>
-                    <div className="flex justify-between">
                       <span className="font-medium">Sunday & Public Holidays</span>
-                      <span className="font-semibold text-primary-600">On-Call Emergency</span>
+                      <span className="font-semibold text-primary-600">Closed</span>
                     </div>
                   </div>
                 </div>
