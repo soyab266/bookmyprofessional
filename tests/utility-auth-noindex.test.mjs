@@ -38,3 +38,10 @@ test("forgot-password layout metadata is noindex, follow with clean canonical", 
   assert.equal(metadata.alternates.canonical, "https://www.bookmyprofessional.com/forgot-password");
   assert.equal(metadata.title, "Reset Password");
 });
+
+test("reset-password layout metadata is noindex, follow with clean canonical", async () => {
+  const { metadata } = await load("../src/app/reset-password/layout.jsx", ["metadata"]);
+  assert.deepEqual(metadata.robots, EXPECTED);
+  assert.equal(metadata.alternates.canonical, "https://www.bookmyprofessional.com/reset-password");
+  assert.equal(metadata.title, "Set New Password");
+});
