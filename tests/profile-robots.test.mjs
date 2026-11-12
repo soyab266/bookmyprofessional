@@ -7,7 +7,8 @@ const source = await readFile(new URL("../src/app/professionals/[id]/layout.jsx"
 const executable = source.replace(/^import .*;\n/gm, "").replace(/export default /g, "").replace(/export /g, "");
 const id = "22525cf7-47b7-4960-8158-ebcf0c8f1c71";
 function route(status) {
-  return new Function("readPublicProfileStatus", "readPublicProfileMetadata", "buildProfileMetadata", "notFound", `${executable}; return { generateMetadata, ProfessionalProfileLayout };`)(
+  return new Function("cache", "readUncachedPublicProfileStatus", "readPublicProfileMetadata", "buildProfileMetadata", "notFound", `${executable}; return { generateMetadata, ProfessionalProfileLayout };`)(
+    fn => { let result; return (...args) => result ??= fn(...args); },
     async () => status,
     async () => ({ name: "Example Doctor", category: "Doctor", city: "Example City" }),
     buildProfileMetadata,
@@ -32,3 +33,8 @@ for (const status of ["found", "unknown"]) {
     assert.equal(await r.ProfessionalProfileLayout({ params: Promise.resolve({ id }), children: "profile" }), "profile");
   });
 }
+
+test("metadata and layout share request-scoped status cache", () => {
+  assert.match(source, /import \{ cache \} from "react"/);
+  assert.match(source, /const readPublicProfileStatus = cache\(readUncachedPublicProfileStatus\)/);
+});
