@@ -12,6 +12,9 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessi
 const OG_IMG   = `${SITE_URL}/og-image.png`;
 const SITE_NAME = "Book My Professional";
 
+// Utility authentication pages are excluded from organic indexing; links remain followable.
+const AUTH_ROBOTS = { index: false, follow: true };
+
 export async function generateMetadata({ searchParams }) {
   const { role } = await searchParams;
 
@@ -25,6 +28,7 @@ export async function generateMetadata({ searchParams }) {
       description:
         "Sign in to your BookMyProfessional professional account to manage your appointments, client messages, availability schedule, and service listings.",
       alternates: { canonical },
+      robots: AUTH_ROBOTS,
       openGraph: {
         type: "website", locale: "en_IN",
         url: `${SITE_URL}/login?role=professional`,
@@ -48,6 +52,7 @@ export async function generateMetadata({ searchParams }) {
       description:
         "Sign in to your BookMyProfessional customer account to view upcoming bookings, track service requests, and communicate with verified professionals.",
       alternates: { canonical },
+      robots: AUTH_ROBOTS,
       openGraph: {
         type: "website", locale: "en_IN",
         url: `${SITE_URL}/login?role=customer`,
@@ -71,6 +76,7 @@ export async function generateMetadata({ searchParams }) {
     description:
       "Sign in to your BookMyProfessional account to manage appointments, bookings, and direct messages with verified professionals.",
     alternates: { canonical },
+    robots: AUTH_ROBOTS,
     openGraph: {
       type: "website", locale: "en_IN",
       url: `${SITE_URL}/login`,
