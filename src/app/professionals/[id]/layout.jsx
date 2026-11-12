@@ -1,15 +1,12 @@
-const SITE_URL = (process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessional.com").replace(/\/+$/, "");
+import { buildProfileMetadata, readPublicProfileMetadata } from "@/lib/profile-metadata";
 
-// Generate this on the server, even while the profile UI loads on the client.
-// Otherwise profiles inherit /professionals as their preferred URL.
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessional.com";
+
+// Server metadata is independent of the existing client-rendered profile UI.
 export async function generateMetadata({ params }) {
   const { id } = await params;
-
-  return {
-    alternates: {
-      canonical: `${SITE_URL}/professionals/${encodeURIComponent(id)}`,
-    },
-  };
+  const profile = await readPublicProfileMetadata(id);
+  return buildProfileMetadata(id, profile, SITE_URL);
 }
 
 export default function ProfessionalProfileLayout({ children }) {
