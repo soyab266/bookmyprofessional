@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { byPincodeProximity } from "@/lib/pincode";
+import { locationFilterTerm } from "../location-filter.js";
 import { byDistanceFrom } from "@/lib/geo";
 import { listLocations, DEFAULT_LOCATIONS } from "./locations";
 
@@ -148,7 +149,7 @@ function applyFilters(query, opts) {
   let q = applySearch(query, opts.search);
 
   if (opts.category && opts.category !== "all") q = q.ilike("category", opts.category);
-  const city = sanitizeTerm(opts.location === "all" ? "" : opts.location);
+  const city = locationFilterTerm(opts.location === "all" ? "" : opts.location);
   if (city) q = q.ilike("city", `%${city}%`);
   const pincode = sanitizeTerm(opts.pincode);
   if (pincode) q = q.ilike("pincode", `%${pincode}%`);
