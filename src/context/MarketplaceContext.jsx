@@ -68,6 +68,7 @@ export function MarketplaceProvider({ children }) {
   const [bookings, setBookings] = useState([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [directoryReadVersion, setDirectoryReadVersion] = useState(0);
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
   // Directory Filter State
@@ -211,6 +212,7 @@ export function MarketplaceProvider({ children }) {
         near: nearCoords,
       });
       if (!active) return;
+      setDirectoryReadVersion((version) => version + 1);
       setFilteredProfessionals(rows);
       setTotal(count);
       setPincodeRelaxed(Boolean(relaxedPincode));
@@ -504,6 +506,7 @@ export function MarketplaceProvider({ children }) {
   return (
     <MarketplaceContext.Provider
       value={{
+        directoryReadVersion,
         // Data
         professionals,
         filteredProfessionals,

@@ -44,15 +44,16 @@ const CATEGORY_LABELS = {
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-export default function MarketplaceDirectory({ preview = false }) {
+export default function MarketplaceDirectory({ preview = false, initialDirectory = null }) {
   const {
     professionals,
-    filteredProfessionals,
+    filteredProfessionals: liveFilteredProfessionals,
+    directoryReadVersion,
     locations,
-    isLoadingProfessionals,
+    isLoadingProfessionals: liveIsLoadingProfessionals,
     searchQuery,
     setSearchQuery,
-    selectedCategory,
+    selectedCategory: liveSelectedCategory,
     setSelectedCategory,
     selectedLocation,
     setSelectedLocation,
@@ -75,11 +76,21 @@ export default function MarketplaceDirectory({ preview = false }) {
     setSortBy,
     page,
     pageSize,
-    total,
+    total: liveTotal,
     setPage,
     openProDetail,
     startBooking,
   } = useMarketplace();
+
+  // Initial cards are the actual visible directory, not a duplicate SEO-only list.
+  // Retire the snapshot permanently after the first live query, including zero results.
+  const [initialSnapshotRetired, setInitialSnapshotRetired] = useState(false);
+  const useInitialDirectory = initialDirectory && directoryReadVersion === 0 && !initialSnapshotRetired;
+  const selectedCategory = useInitialDirectory ? initialDirectory.category : liveSelectedCategory;
+  const initialUnavailable = useInitialDirectory && initialDirectory.status !== "ready";
+  const filteredProfessionals = useInitialDirectory ? initialDirectory.rows : liveFilteredProfessionals;
+  const total = useInitialDirectory ? initialDirectory.total || 0 : liveTotal;
+  const isLoadingProfessionals = useInitialDirectory ? initialUnavailable : liveIsLoadingProfessionals;
 
   const { showToast } = useAuth();
   const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
@@ -233,7 +244,9 @@ export default function MarketplaceDirectory({ preview = false }) {
   const rangeEnd = Math.min(page * pageSize, total);
 
   return (
-    <section id="find" className="py-14 sm:py-18 bg-background border-b border-border scroll-mt-14">
+    <section id="find" onInputCapture={() => setInitialSnapshotRetired(true)} onClickCapture={(event) => {
+      if (event.target.closest("button, select, input")) setInitialSnapshotRetired(true);
+    }} className="py-14 sm:py-18 bg-background border-b border-border scroll-mt-14">
       <div className="mx-auto max-w-[1300px] px-4 sm:px-6 lg:px-8">
         {/* Section Header */}
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-8">
@@ -256,7 +269,7 @@ export default function MarketplaceDirectory({ preview = false }) {
           <div className="hidden lg:flex items-center gap-4 bg-surface py-2.5 px-4 rounded-xl border border-border shadow-xs">
             <div className="text-right">
               <span className="block text-xs font-semibold text-dark-900">
-                {isLoadingProfessionals ? "Loading experts…" : `${total} Experts Available`}
+                {initialUnavailable ? "Directory temporarily unavailable" : isLoadingProfessionals ? "Loading experts…" : `${total} Experts Available`}
               </span>
               <span className="block text-[11px] text-emerald-600 font-medium">
                 ● 100% Background Verified
@@ -635,7 +648,9 @@ export default function MarketplaceDirectory({ preview = false }) {
         )}
 
         {/* RESULTS GRID OR EMPTY STATE */}
-        {filteredProfessionals.length === 0 ? (
+        {initialUnavailable ? (
+          <p role="status" className="py-12 text-center text-sm text-dark-600">The directory is temporarily unavailable. Please try again shortly.</p>
+        ) : filteredProfessionals.length === 0 ? (
           <div className="bg-surface rounded-2xl border border-dashed border-border p-12 text-center my-6">
             <div className="mx-auto w-14 h-14 rounded-full bg-primary-50 text-primary-500 flex items-center justify-center mb-3">
               <Search className="h-6 w-6" />
@@ -874,4 +889,4 @@ export default function MarketplaceDirectory({ preview = false }) {
       </div>
     </section>
   );
-}
+                      }
