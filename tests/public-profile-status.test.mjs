@@ -5,7 +5,7 @@ import { readPublicProfileStatus, profileNameMatches } from "../src/lib/public-p
 const id = "22525cf7-47b7-4960-8158-ebcf0c8f1c71";
 const opts = (rows, status = 200, inspect = () => {}) => ({
   url: "https://example.invalid", anonKey: "fixture-key",
-  fetcher: async (url, init) => { inspect(url, init); return new Response(JSON.stringify(rows), { status }); },
+  fetcher: async (url, init) => { inspect(url, init); return new Response(JSON.stringify(rows), { status, headers: { "content-range": `0-0/${Array.isArray(rows) ? rows.length : 0}` } }); },
 });
 test("UUID existence read uses only anonymous id, active=true, no-store and bounded timeout", async () => {
   assert.equal(await readPublicProfileStatus(id, opts([{id}], 200, (url, init) => {
@@ -44,4 +44,21 @@ test("server layout rejects only confirmed missing, leaves client detail body un
   assert.match(layout, /buildProfileMetadata\(id, profile, SITE_URL\)/);
   const page = await readFile(new URL("../src/app/professionals/[id]/page.jsx", import.meta.url), "utf8");
   assert.ok(page.startsWith('"use client";'));
+});
+
+ test("unmatched full name window is incomplete, never confirmed missing", async () => {
+  const rows = Array.from({ length: 500 }, (_, i) => ({ id, name: `Example ${i}` }));
+  const truncated = opts(rows);
+  truncated.fetcher = async () => new Response(JSON.stringify(rows), { headers: { "content-range": "0-499/501" } });
+  assert.equal(await readPublicProfileStatus("outside-window", truncated), "unknown");
+  assert.equal(await readPublicProfileStatus("example-499", opts(rows)), "found");
+  assert.equal(await readPublicProfileStatus("outside-window", opts(rows.slice(0, 499))), "missing");
+});
+
+test("smaller provider row caps and missing total are not proof of name absence", async () => {
+ const rows = [{ id, name: "Example" }];
+ for (const headers of [{"content-range":"0-0/2"}, {}]) {
+  const o = opts(rows);o.fetcher = async () => new Response(JSON.stringify(rows), {headers});
+  assert.equal(await readPublicProfileStatus("missing-name", o), "unknown");
+ }
 });
