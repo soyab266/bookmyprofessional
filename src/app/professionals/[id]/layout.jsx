@@ -8,7 +8,11 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessi
 export async function generateMetadata({ params }) {
   const { id } = await params;
   const profile = await readPublicProfileMetadata(id);
-  return buildProfileMetadata(id, profile, SITE_URL);
+  const metadata = buildProfileMetadata(id, profile, SITE_URL);
+  // Clear inherited index/follow only for confirmed absence. Next.js supplies
+  // the single noindex tag for notFound(); real/unknown profiles keep defaults.
+  if (await readPublicProfileStatus(id) === "missing") metadata.robots = null;
+  return metadata;
 }
 
 export default async function ProfessionalProfileLayout({ children, params }) {
