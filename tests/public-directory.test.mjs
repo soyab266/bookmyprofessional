@@ -45,3 +45,11 @@ test("directory snapshot ends on a completed live read, not on rows being nonemp
   assert.match(context, /setDirectoryReadVersion\(\(version\) => version \+ 1\)/);
   assert.match(component, /The directory is temporarily unavailable/);
 });
+
+test("directory card badge renders the actual service-package count, never a forced minimum", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const component = await readFile(new URL("../src/components/MarketplaceDirectory.jsx", import.meta.url), "utf8");
+  assert.ok(!component.includes("services?.length || 1"), "forced minimum of 1 must not return");
+  assert.match(component, /pro\.services\?\.length \?\? 0/);
+  assert.match(component, /pro\.services\?\.length === 1 \? "Service" : "Services"/);
+});
