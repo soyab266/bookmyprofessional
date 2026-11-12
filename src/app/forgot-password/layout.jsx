@@ -7,6 +7,8 @@ export const metadata = {
   alternates: {
     canonical: `${SITE_URL}/forgot-password`,
   },
+  // Utility authentication page - excluded from organic indexing; links remain followable.
+  robots: { index: false, follow: true },
   openGraph: {
     type: "website",
     locale: "en_IN",
