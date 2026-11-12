@@ -12,6 +12,9 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessi
 const OG_IMG   = `${SITE_URL}/og-image.png`;
 const SITE_NAME = "Book My Professional";
 
+// Utility authentication pages are excluded from organic indexing; links remain followable.
+const AUTH_ROBOTS = { index: false, follow: true };
+
 export async function generateMetadata({ searchParams }) {
   const { role } = await searchParams;
 
@@ -25,6 +28,7 @@ export async function generateMetadata({ searchParams }) {
       description:
         "Register as a verified professional on BookMyProfessional to connect with customers, manage your appointments, and grow your service business across India.",
       alternates: { canonical },
+      robots: AUTH_ROBOTS,
       openGraph: {
         type: "website", locale: "en_IN",
         url: `${SITE_URL}/register?role=professional`,
@@ -50,6 +54,7 @@ export async function generateMetadata({ searchParams }) {
     description:
       "Sign up on BookMyProfessional to hire verified experts near you or list your professional services and connect with customers across India.",
     alternates: { canonical },
+    robots: AUTH_ROBOTS,
     openGraph: {
       type: "website", locale: "en_IN",
       url: `${SITE_URL}/register`,
