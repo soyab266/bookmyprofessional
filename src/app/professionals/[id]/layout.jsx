@@ -1,6 +1,10 @@
+import { cache } from "react";
 import { notFound } from "next/navigation";
-import { readPublicProfileStatus } from "@/lib/public-profile-status";
+import { readPublicProfileStatus as readUncachedPublicProfileStatus } from "@/lib/public-profile-status";
 import { buildProfileMetadata, readPublicProfileMetadata } from "@/lib/profile-metadata";
+
+// Share the status decision between metadata and layout in each render pass.
+const readPublicProfileStatus = cache(readUncachedPublicProfileStatus);
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessional.com";
 
