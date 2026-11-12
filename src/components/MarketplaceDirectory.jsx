@@ -814,7 +814,7 @@ export default function MarketplaceDirectory({ preview = false, initialDirectory
 
                       {/* Services count */}
                       <span className="text-[11px] font-medium text-dark-500 bg-primary-50 px-2 py-1 rounded-md text-primary-700">
-                        {pro.services?.length || 1} Services
+                        {pro.services?.length ?? 0} {pro.services?.length === 1 ? "Service" : "Services"}
                       </span>
                     </div>
 
@@ -889,4 +889,4 @@ export default function MarketplaceDirectory({ preview = false, initialDirectory
       </div>
     </section>
   );
-                      }
+}
