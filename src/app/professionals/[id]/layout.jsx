@@ -1,6 +1,10 @@
+import { cache } from "react";
 import { notFound } from "next/navigation";
-import { readPublicProfileStatus } from "@/lib/public-profile-status";
+import { readPublicProfileStatus as readUncachedPublicProfileStatus } from "@/lib/public-profile-status";
 import { buildProfileMetadata, readPublicProfileMetadata } from "@/lib/profile-metadata";
+
+// Share the status decision between metadata and layout in each render pass.
+const readPublicProfileStatus = cache(readUncachedPublicProfileStatus);
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessional.com";
 
@@ -8,7 +12,11 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessi
 export async function generateMetadata({ params }) {
   const { id } = await params;
   const profile = await readPublicProfileMetadata(id);
-  return buildProfileMetadata(id, profile, SITE_URL);
+  const metadata = buildProfileMetadata(id, profile, SITE_URL);
+  // Clear inherited index/follow only for confirmed absence. Next.js supplies
+  // the single noindex tag for notFound(); real/unknown profiles keep defaults.
+  if (await readPublicProfileStatus(id) === "missing") metadata.robots = null;
+  return metadata;
 }
 
 export default async function ProfessionalProfileLayout({ children, params }) {
