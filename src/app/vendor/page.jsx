@@ -28,6 +28,7 @@ import { getEarningsSummary, listMyPayouts } from "@/lib/data/payments";
 import { getNotificationPrefs, updateNotificationPrefs } from "@/lib/data/notifications";
 import { listAllCategories, listCategories, listSubcategories } from "@/lib/data/categories";
 import { formatInclusions } from "@/lib/inclusions";
+import { SERVICE_AREA_CITIES } from "@/lib/service-areas";
 import { uploadImage, ikImage } from "@/lib/imagekit";
 import { cleanPincode, isValidPincodeFormat } from "@/lib/pincode";
 import PincodeInput from "@/components/PincodeInput";
@@ -245,6 +246,7 @@ export default function VendorPortalPage() {
     role_title: "",
     services: [],
     credentials: [],
+    serviceAreas: [],
   });
   const [categoriesList, setCategoriesList] = useState([]);
   const [subcategoriesMap, setSubcategoriesMap] = useState({});
@@ -733,6 +735,7 @@ export default function VendorPortalPage() {
         category: vendorProfile.category,
         subcategory: vendorProfile.subcategory,
         role_title: vendorProfile.role_title,
+        serviceAreas: vendorProfile.serviceAreas,
       });
       showToast("Profile, title & experience saved.", "success");
     } catch (err) {
@@ -1904,6 +1907,41 @@ export default function VendorPortalPage() {
                           Locked to your verified service pincode.
                         </p>
                       </div>
+                    <div className="mt-4 sm:col-span-2">
+                      <label className="block text-xs font-semibold text-dark-700 mb-1.5">
+                        Areas served
+                      </label>
+                      <div className="flex flex-wrap gap-2">
+                        {SERVICE_AREA_CITIES.map((city) => {
+                          const selected = (vendorProfile.serviceAreas || []).includes(city);
+                          return (
+                            <button
+                              key={city}
+                              type="button"
+                              onClick={() =>
+                                setVendorProfile((prev) => ({
+                                  ...prev,
+                                  serviceAreas: selected
+                                    ? (prev.serviceAreas || []).filter((area) => area !== city)
+                                    : [...(prev.serviceAreas || []), city],
+                                }))
+                              }
+                              className={`py-1.5 px-3.5 rounded-xl border text-xs font-semibold transition-colors ${
+                                selected
+                                  ? "border-primary-500 bg-primary-50 text-primary-700"
+                                  : "border-border bg-white text-dark-600 hover:bg-dark-50"
+                              }`}
+                            >
+                              {city}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] text-dark-400 mt-1.5">
+                        Cities where you accept bookings. Customers searching these cities can find
+                        you. Your profile address stays unchanged.
+                      </p>
+                    </div>
                     </div>
                       );
                     })()}
@@ -2594,4 +2632,4 @@ export default function VendorPortalPage() {
       </main>
     </div>
   );
-}
+                          }
