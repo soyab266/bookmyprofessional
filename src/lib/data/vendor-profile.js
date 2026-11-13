@@ -116,6 +116,49 @@ export async function getVendorProfile(professionalId) {
       image_url: pro?.image_url || "",
       verification_status: pro?.verification_status || "not_submitted",
       hourlyRate: Number(pro?.hourly_rate) || 0,
+import { parseInclusions } from "@/lib/inclusions";
+import { validatePayoutDetails, getBankNameFromIFSC } from "@/lib/payout-validation";
+import { sanitizeServiceAreas } from "@/lib/service-areas";
+
+const EMPTY = { experienceYears: 0, specialty: "", city: "", pincode: "", category: "", subcategory: "", role_title: "", services: [], credentials: [], payout_details: null, serviceAreas: [] };
+// ponytail: empty profile on error keeps the vendor page alive while supabase/schema.sql is unapplied.
+export async function getVendorProfile(professionalId) {
+  if (!professionalId) return { ...EMPTY };
+  try {
+    const supabase = createClient();
+    const FULL_COLUMNS =
+      "experience_years, specialty, city, name, image_url, verification_status, hourly_rate, category, subcategory, role_title, pincode, availability, payout_details, service_areas";
+    const BASE_COLUMNS =
+      "experience_years, specialty, city, name, image_url, verification_status, hourly_rate, category, availability";
+    const [{ data: services }, { data: credentials }] = await Promise.all([
+      supabase.from("services").select("*").eq("professional_id", professionalId).order("sort"),
+      supabase.from("credentials").select("*").eq("professional_id", professionalId),
+    ]);
+    let { data: pro, error } = await supabase
+      .from("professionals")
+      .select(FULL_COLUMNS)
+      .eq("id", professionalId)
+      .maybeSingle();
+    if (error || !pro) {
+      // subcategory/role_title/pincode/payout_details column may not exist yet (schema not applied) — retry without them
+      ({ data: pro } = await supabase
+        .from("professionals")
+        .select(BASE_COLUMNS)
+        .eq("id", professionalId)
+        .maybeSingle());
+    }
+    return {
+      experienceYears: pro?.experience_years || 0,
+      specialty: pro?.specialty || "",
+      city: pro?.city || "",
+      pincode: pro?.pincode || "",
+      category: pro?.category || "",
+      subcategory: pro?.subcategory || "",
+      role_title: pro?.role_title || "",
+      name: pro?.name || "",
+      image_url: pro?.image_url || "",
+      verification_status: pro?.verification_status || "not_submitted",
+      hourlyRate: Number(pro?.hourly_rate) || 0,
       availability: pro?.availability || null,
       payout_details: pro?.payout_details || null,
       serviceAreas: Array.isArray(pro?.service_areas) ? pro.service_areas : [],
