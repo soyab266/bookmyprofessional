@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { byPincodeProximity } from "@/lib/pincode";
 import { locationFilterTerm } from "../location-filter.js";
+import { canonicalServiceArea, servesArea } from "../service-areas.js";
 import { byDistanceFrom } from "@/lib/geo";
 import { listLocations, DEFAULT_LOCATIONS } from "./locations";
 
@@ -92,6 +93,9 @@ function mapProfessional(row, locMap) {
     bio: row.bio || "",
     about: row.about || "",
     pincode: row.pincode || "",
+    serviceAreas: Array.isArray(row.service_areas)
+      ? row.service_areas.filter((area) => typeof area === "string")
+      : [],
     credentials: (row.credentials || []).map((c) => ({
       title: c.title,
       issuer: c.issuer,
@@ -150,7 +154,17 @@ function applyFilters(query, opts) {
 
   if (opts.category && opts.category !== "all") q = q.ilike("category", opts.category);
   const city = locationFilterTerm(opts.location === "all" ? "" : opts.location);
-  if (city) q = q.ilike("city", `%${city}%`);
+  // A coverage-city search also matches pros who declared that city in their
+  // "Areas served" list. Matching is the pro's own declaration, so stored
+  // addresses stay untouched and no district-wide geography is assumed.
+  const servedCity = opts.skipServiceAreas
+    ? null
+    : canonicalServiceArea(opts.location === "all" ? "" : opts.location);
+  if (city && servedCity) {
+    q = q.or(`city.ilike.%${city}%,service_areas.cs.{"${servedCity}"}`);
+  } else if (city) {
+    q = q.ilike("city", `%${city}%`);
+  }
   const pincode = sanitizeTerm(opts.pincode);
   if (pincode) q = q.ilike("pincode", `%${pincode}%`);
   if (opts.minRating > 0) q = q.gte("rating", opts.minRating);
@@ -197,7 +211,9 @@ function clientFilter(rows, opts) {
     }
 
     if (opts.location && opts.location !== "all") {
-      if (!(pro.location || "").toLowerCase().includes(opts.location.toLowerCase())) return false;
+      const servedCity = canonicalServiceArea(opts.location);
+      const declared = servedCity ? servesArea(pro, servedCity) : false;
+      if (!declared && !(pro.location || "").toLowerCase().includes(opts.location.toLowerCase())) return false;
     }
 
     if (opts.pincode) {
@@ -329,7 +345,20 @@ export async function queryProfessionals(supabase, options = {}) {
       }
     } else {
       const from = (safePage - 1) * safeSize;
-      const { data, error, count } = await query.range(from, from + safeSize - 1);
+      let { data, error, count } = await query.range(from, from + safeSize - 1);
+
+      if (error && String(error.message || "").includes("service_areas")) {
+        // The database predates the professionals.service_areas column: retry
+        // with the plain literal city filter so the directory keeps working
+        // until the additive schema change is applied.
+        let retry = supabase
+          .from("professionals")
+          .select("*, services(*), credentials(*), reviews(*)", { count: "exact" })
+          .eq("is_active", true);
+        retry = applyFilters(retry, { ...opts, skipServiceAreas: true });
+        retry = applySort(retry, sortBy);
+        ({ data, error, count } = await retry.range(from, from + safeSize - 1));
+      }
 
       if (error) throw error;
 

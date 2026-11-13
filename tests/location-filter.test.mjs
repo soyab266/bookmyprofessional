@@ -20,7 +20,10 @@ test("PostgREST filter and wildcard punctuation remains sanitized", () => {
 test("server city query uses the literal-safe term without changing other filters or adding aliases", async () => {
   const source = await readFile(new URL("../src/lib/data/professionals.js", import.meta.url), "utf8");
   assert.match(source, /const city = locationFilterTerm\(opts.location === "all" \? "" : opts.location\)/);
-  assert.match(source, /if \(city\) q = q.ilike\("city", `%\$\{city\}%`\)/);
+  // Coverage-city searches also match a pro's own declared Areas served;
+  // every other place keeps the literal city ilike.
+  assert.match(source, /city\.ilike\.%\$\{city\}%,service_areas\.cs\./);
+  assert.match(source, /q = q\.ilike\("city", `%\$\{city\}%`\)/);
   assert.match(source, /const pincode = sanitizeTerm\(opts.pincode\)/);
   assert.match(source, /if \(opts.category && opts.category !== "all"\)/);
   assert.doesNotMatch(source, /METRO_ALIASES/);
