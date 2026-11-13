@@ -5,14 +5,23 @@
 // pincode city validation keeps its existing behavior.
 //
 // Directory location search deliberately uses NARROWER groupings:
-// - SEARCH_NAME_ALIASES: official renames / alternate spellings of the same
-//   city (Bengaluru = Bangalore). Symmetric.
-// - SEARCH_METRO_AREAS: directional - searching the metro also matches these
-//   stored area/district names (Hyderabad finds K.V.Rangareddy, which the
-//   site owner confirmed belongs to the Hyderabad area). The reverse is NOT
-//   widened: selecting a specific area or district stays a literal match.
+// - SEARCH_NAME_ALIASES: documented official renames of the same city
+//   (Mumbai/Bombay 1995, Chennai/Madras 1996, Kolkata/Calcutta 2001,
+//   Bengaluru/Bangalore 2014, Gurugram/Gurgaon 2016). Symmetric.
+// - SEARCH_METRO_AREAS: directional - searching the metro also matches stored
+//   area/district names that are part of that metro, each grounded:
+//   Hyderabad: Secunderabad (twin city, merged urban agglomeration),
+//   Cyberabad (Hyderabad IT-corridor area), (K.V.)Rangareddy/Ranga Reddy
+//   (district carved out of Hyderabad district; the site owner confirmed the
+//   current Ranga Reddy profiles belong to the Hyderabad area), Shamshabad
+//   (Ranga Reddy mandal in the Hyderabad metropolitan area).
+//   Mumbai: Mumbai City + Mumbai Suburban districts together form the
+//   metropolis. Delhi: New Delhi and the districts of NCT Delhi.
+//   Bangalore: Bengaluru Urban district contains Bengaluru city.
+//   The reverse is NOT widened: selecting an area or district stays literal.
 // Separate cities near a metro (Thane, Navi Mumbai, Howrah, Pimpri-Chinchwad,
-// Greater Noida, Medchal) are intentionally excluded from search expansion.
+// Greater Noida, Medchal, Bengaluru Rural) and Gautam Buddha Nagar (a
+//   district containing both Noida and Greater Noida) are excluded.
 
 export const METRO_ALIASES = {
   hyderabad:   ["hyderabad", "secunderabad", "cyberabad", "rangareddy", "kvrangareddy", "shamshabad", "medchal", "ranga reddy"],
@@ -33,7 +42,6 @@ export const METRO_ALIASES = {
 export const SEARCH_NAME_ALIASES = {
   bangalore: ["bangalore", "bengaluru"],
   mumbai:    ["mumbai", "bombay"],
-  delhi:     ["delhi", "new delhi"],
   kolkata:   ["kolkata", "calcutta"],
   chennai:   ["chennai", "madras"],
   gurgaon:   ["gurgaon", "gurugram"],
@@ -42,9 +50,8 @@ export const SEARCH_NAME_ALIASES = {
 export const SEARCH_METRO_AREAS = {
   hyderabad: ["secunderabad", "cyberabad", "rangareddy", "kvrangareddy", "ranga reddy", "shamshabad"],
   mumbai:    ["mumbai city", "mumbai suburban"],
-  delhi:     ["central delhi", "south delhi", "north delhi", "east delhi", "west delhi"],
+  delhi:     ["new delhi", "central delhi", "south delhi", "north delhi", "east delhi", "west delhi"],
   bangalore: ["bengaluru urban"],
-  noida:     ["gautam buddha nagar"],
 };
 
 export function normalizeLocationName(value) {
@@ -52,10 +59,10 @@ export function normalizeLocationName(value) {
 }
 
 // Every stored-city term a location search should match:
-// - a searched metro expands to its alternate names plus its area/district
-//   names (Hyderabad -> ...rangareddy...);
-// - an area/district name searched directly (K.V.Rangareddy) and any city
-//   outside the tables pass through unchanged for exact literal matching.
+// - a searched metro expands to its official rename plus its grounded
+//   area/district names (Hyderabad -> ...rangareddy..., Delhi -> new delhi);
+// - an area/district name searched directly (K.V.Rangareddy, New Delhi) and
+//   any city outside the tables (Noida, Aligarh) pass through unchanged.
 export function locationSearchTerms(value) {
   const term = String(value || "").trim();
   const norm = normalizeLocationName(term);
