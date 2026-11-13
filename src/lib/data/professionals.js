@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { byPincodeProximity } from "@/lib/pincode";
 import { locationFilterTerm } from "../location-filter.js";
+import { locationSearchTerms } from "../location-aliases.js";
 import { byDistanceFrom } from "@/lib/geo";
 import { listLocations, DEFAULT_LOCATIONS } from "./locations";
 
@@ -149,8 +150,17 @@ function applyFilters(query, opts) {
   let q = applySearch(query, opts.search);
 
   if (opts.category && opts.category !== "all") q = q.ilike("category", opts.category);
-  const city = locationFilterTerm(opts.location === "all" ? "" : opts.location);
-  if (city) q = q.ilike("city", `%${city}%`);
+  // A searched city expands through the shared metro alias groups so stored
+  // district names (K.V.Rangareddy) match the metro search (Hyderabad).
+  const cityTerms = [...new Set(
+    locationSearchTerms(opts.location === "all" ? "" : opts.location)
+      .map(locationFilterTerm)
+      .filter(Boolean)
+  )];
+  if (cityTerms.length === 1) q = q.ilike("city", `%${cityTerms[0]}%`);
+  else if (cityTerms.length > 1) {
+    q = q.or(cityTerms.map((term) => `city.ilike.%${term}%`).join(","));
+  }
   const pincode = sanitizeTerm(opts.pincode);
   if (pincode) q = q.ilike("pincode", `%${pincode}%`);
   if (opts.minRating > 0) q = q.gte("rating", opts.minRating);
@@ -197,7 +207,9 @@ function clientFilter(rows, opts) {
     }
 
     if (opts.location && opts.location !== "all") {
-      if (!(pro.location || "").toLowerCase().includes(opts.location.toLowerCase())) return false;
+      const terms = locationSearchTerms(opts.location).map((term) => term.toLowerCase());
+      const hay = [pro.city, pro.location].map((value) => (value || "").toLowerCase());
+      if (!terms.some((term) => hay.some((value) => value.includes(term)))) return false;
     }
 
     if (opts.pincode) {
