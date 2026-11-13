@@ -110,9 +110,15 @@ create table if not exists public.professionals (
   rating numeric(2,1) not null default 0,
   review_count int not null default 0,
   availability jsonb not null default '{}'::jsonb,
+  -- cities the professional declares they accept bookings from ("Areas served");
+  -- matching is by this explicit declaration, never by assumed district geography
+  service_areas text[] not null default '{}',
   is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
+
+-- Ensure service_areas exists if the professionals table already existed
+alter table public.professionals add column if not exists service_areas text[] not null default '{}';
 
 create table if not exists public.services (
   id uuid primary key default gen_random_uuid(),
