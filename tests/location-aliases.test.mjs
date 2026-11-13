@@ -13,21 +13,38 @@ test("normalizeLocationName folds case, spaces and punctuation", () => {
   assert.equal(normalizeLocationName(""), "");
 });
 
-test("a metro search expands to its whole alias group", () => {
+test("a metro search expands to its alternate names and area/district names", () => {
   const hyderabad = locationSearchTerms("Hyderabad");
   assert.ok(hyderabad.includes("hyderabad"));
   assert.ok(hyderabad.includes("rangareddy"));
+  assert.ok(hyderabad.includes("ranga reddy"));
   assert.ok(hyderabad.includes("secunderabad"));
-  assert.deepEqual(locationSearchTerms("K.V.Rangareddy"), hyderabad);
-  assert.deepEqual(locationSearchTerms("Ranga Reddy"), hyderabad);
 
   const bangalore = locationSearchTerms("Bangalore");
   assert.ok(bangalore.includes("bengaluru"));
+  assert.ok(bangalore.includes("bengaluru urban"));
   assert.deepEqual(locationSearchTerms("Bengaluru"), bangalore);
 
   const mumbai = locationSearchTerms("Mumbai");
   assert.ok(mumbai.includes("bombay"));
-  assert.ok(mumbai.includes("thane"));
+  assert.ok(mumbai.includes("mumbai suburban"));
+});
+
+test("search expansion never crosses into separate neighbouring cities", () => {
+  for (const separate of ["Thane", "Navi Mumbai", "Howrah", "Pimpri-Chinchwad", "Greater Noida", "Medchal", "Bengaluru Rural"]) {
+    assert.deepEqual(locationSearchTerms(separate), [separate]);
+  }
+  for (const term of locationSearchTerms("Mumbai")) assert.ok(!["thane", "navi mumbai"].includes(term));
+  for (const term of locationSearchTerms("Kolkata")) assert.notEqual(term, "howrah");
+  for (const term of locationSearchTerms("Pune")) assert.notEqual(term, "pimpri-chinchwad");
+  for (const term of locationSearchTerms("Hyderabad")) assert.notEqual(term, "medchal");
+  for (const term of locationSearchTerms("Noida")) assert.notEqual(term, "greater noida");
+});
+
+test("area and district names searched directly stay literal (no reverse widening)", () => {
+  assert.deepEqual(locationSearchTerms("K.V.Rangareddy"), ["K.V.Rangareddy"]);
+  assert.deepEqual(locationSearchTerms("Ranga Reddy"), ["Ranga Reddy"]);
+  assert.deepEqual(locationSearchTerms("Secunderabad"), ["Secunderabad"]);
 });
 
 test("cities outside the alias table pass through unchanged", () => {
@@ -83,15 +100,17 @@ test("querying Hyderabad filters city by every Hyderabad-group term, matching K.
   assert.ok(patterns.some((p) => "k.v.rangareddy".includes(p)));
 });
 
-test("selecting the stored district name itself expands to the same metro group", async () => {
+test("selecting the stored district name itself stays a literal match", async () => {
   const calls = [];
   await queryProfessionals(stubSupabase([RANGAREDDY_ROW], calls), {
     location: "K.V.Rangareddy",
     locations: [],
   });
-  const cityOr = calls.find(([kind, filters]) => kind === "or" && filters.includes("city.ilike"));
-  assert.ok(cityOr);
-  assert.ok(cityOr[1].includes("city.ilike.%hyderabad%"));
+  assert.deepEqual(
+    calls.filter(([kind, column]) => kind === "ilike" && column === "city"),
+    [["ilike", "city", "%K.V.Rangareddy%"]]
+  );
+  assert.ok(!calls.some(([kind]) => kind === "or"));
 });
 
 test("a city outside the alias table keeps the single literal filter", async () => {
