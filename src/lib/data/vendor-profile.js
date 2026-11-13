@@ -73,6 +73,80 @@ export async function updateVendorBasics(professionalId, patch) {
           : (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000");
         const res = await fetch(
           `${origin}/api/location/verify-pincode?pincode=${cleanPin}&city=${encodeURIComponent(patch.city.trim())}`,
+import { parseInclusions } from "@/lib/inclusions";
+import { validatePayoutDetails, getBankNameFromIFSC } from "@/lib/payout-validation";
+import { sanitizeServiceAreas } from "@/lib/service-areas";
+
+const EMPTY = { experienceYears: 0, specialty: "", city: "", pincode: "", category: "", subcategory: "", role_title: "", services: [], credentials: [], payout_details: null, serviceAreas: [] };
+// ponytail: empty profile on error keeps the vendor page alive while supabase/schema.sql is unapplied.
+export async function getVendorProfile(professionalId) {
+  if (!professionalId) return { ...EMPTY };
+  try {
+    const supabase = createClient();
+    const FULL_COLUMNS =
+      "experience_years, specialty, city, name, image_url, verification_status, hourly_rate, category, subcategory, role_title, pincode, availability, payout_details, service_areas";
+    const BASE_COLUMNS =
+      "experience_years, specialty, city, name, image_url, verification_status, hourly_rate, category, availability";
+    const [{ data: services }, { data: credentials }] = await Promise.all([
+      supabase.from("services").select("*").eq("professional_id", professionalId).order("sort"),
+      supabase.from("credentials").select("*").eq("professional_id", professionalId),
+    ]);
+    let { data: pro, error } = await supabase
+      .from("professionals")
+      .select(FULL_COLUMNS)
+      .eq("id", professionalId)
+      .maybeSingle();
+    if (error || !pro) {
+      // subcategory/role_title/pincode/payout_details column may not exist yet (schema not applied) — retry without them
+      ({ data: pro } = await supabase
+        .from("professionals")
+        .select(BASE_COLUMNS)
+        .eq("id", professionalId)
+        .maybeSingle());
+    }
+    return {
+      experienceYears: pro?.experience_years || 0,
+      specialty: pro?.specialty || "",
+      city: pro?.city || "",
+      pincode: pro?.pincode || "",
+      category: pro?.category || "",
+      subcategory: pro?.subcategory || "",
+      role_title: pro?.role_title || "",
+      name: pro?.name || "",
+      image_url: pro?.image_url || "",
+      verification_status: pro?.verification_status || "not_submitted",
+      hourlyRate: Number(pro?.hourly_rate) || 0,
+      availability: pro?.availability || null,
+      payout_details: pro?.payout_details || null,
+      serviceAreas: Array.isArray(pro?.service_areas) ? pro.service_areas : [],
+      services: services || [],
+      credentials: credentials || [],
+    };
+  } catch {
+    return { ...EMPTY };
+  }
+}
+
+export async function updateVendorBasics(professionalId, patch) {
+  const supabase = createClient();
+  const cleanPin = String(patch.pincode || "").replace(/\D/g, "").slice(0, 6);
+
+  // Server-side pincode validation — must be 6 digits and exist in India Post
+  if (cleanPin) {
+    if (!/^[1-9][0-9]{5}$/.test(cleanPin)) {
+      throw Object.assign(
+        new Error("Pincode must be exactly 6 digits and cannot start with 0."),
+        { isUserFacing: true, field: "pincode" }
+      );
+    }
+    // Cross-check city against pincode via our API (server-to-server)
+    if (patch.city?.trim()) {
+      try {
+        const origin = typeof window !== "undefined"
+          ? window.location.origin
+          : (process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000");
+        const res = await fetch(
+          `${origin}/api/location/verify-pincode?pincode=${cleanPin}&city=${encodeURIComponent(patch.city.trim())}`,
           { headers: { Accept: "application/json" } }
         );
         const data = await res.json();
@@ -110,11 +184,15 @@ export async function updateVendorBasics(professionalId, patch) {
     subcategory: cleanSub,
     role_title: cleanTitle,
   };
+  let serviceAreasPersisted = true;
   let { error } = await supabase
     .from("professionals")
     .update({ ...row, pincode: cleanPin || "", service_areas: sanitizeServiceAreas(patch.serviceAreas) })
     .eq("id", professionalId);
   if (error) {
+    // Any fallback save drops service_areas (e.g. column not yet applied) -
+    // the caller must tell the user the area selection was NOT stored.
+    serviceAreasPersisted = false;
     // If subcategory/role_title or pincode columns don't exist yet, retry with base fields
     const baseRow = {
       experience_years: Number(patch.experienceYears) || 0,
@@ -126,7 +204,14 @@ export async function updateVendorBasics(professionalId, patch) {
     ({ error } = await supabase.from("professionals").update(baseRow).eq("id", professionalId));
   }
   if (error) throw error;
-  return { ...patch, subcategory: cleanSub, role_title: cleanTitle, pincode: cleanPin, serviceAreas: sanitizeServiceAreas(patch.serviceAreas) };
+  return {
+    ...patch,
+    subcategory: cleanSub,
+    role_title: cleanTitle,
+    pincode: cleanPin,
+    serviceAreas: sanitizeServiceAreas(patch.serviceAreas),
+    serviceAreasPersisted,
+  };
 }
 
 export async function updateVendorSchedule(professionalId, availability) {
