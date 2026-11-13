@@ -2632,4 +2632,4 @@ export default function VendorPortalPage() {
       </main>
     </div>
   );
-                          }
+}
