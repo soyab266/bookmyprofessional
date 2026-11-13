@@ -157,7 +157,9 @@ function applyFilters(query, opts) {
   // A coverage-city search also matches pros who declared that city in their
   // "Areas served" list. Matching is the pro's own declaration, so stored
   // addresses stay untouched and no district-wide geography is assumed.
-  const servedCity = canonicalServiceArea(opts.location === "all" ? "" : opts.location);
+  const servedCity = opts.skipServiceAreas
+    ? null
+    : canonicalServiceArea(opts.location === "all" ? "" : opts.location);
   if (city && servedCity) {
     q = q.or(`city.ilike.%${city}%,service_areas.cs.{"${servedCity}"}`);
   } else if (city) {
@@ -343,7 +345,20 @@ export async function queryProfessionals(supabase, options = {}) {
       }
     } else {
       const from = (safePage - 1) * safeSize;
-      const { data, error, count } = await query.range(from, from + safeSize - 1);
+      let { data, error, count } = await query.range(from, from + safeSize - 1);
+
+      if (error && String(error.message || "").includes("service_areas")) {
+        // The database predates the professionals.service_areas column: retry
+        // with the plain literal city filter so the directory keeps working
+        // until the additive schema change is applied.
+        let retry = supabase
+          .from("professionals")
+          .select("*, services(*), credentials(*), reviews(*)", { count: "exact" })
+          .eq("is_active", true);
+        retry = applyFilters(retry, { ...opts, skipServiceAreas: true });
+        retry = applySort(retry, sortBy);
+        ({ data, error, count } = await retry.range(from, from + safeSize - 1));
+      }
 
       if (error) throw error;
 
