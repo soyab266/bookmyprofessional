@@ -17,11 +17,21 @@ test("PostgREST filter and wildcard punctuation remains sanitized", () => {
   }
 });
 
-test("server city query uses the literal-safe term without changing other filters or adding aliases", async () => {
+test("server city query expands metro aliases and sanitizes every term", async () => {
   const source = await readFile(new URL("../src/lib/data/professionals.js", import.meta.url), "utf8");
-  assert.match(source, /const city = locationFilterTerm\(opts.location === "all" \? "" : opts.location\)/);
-  assert.match(source, /if \(city\) q = q.ilike\("city", `%\$\{city\}%`\)/);
-  assert.match(source, /const pincode = sanitizeTerm\(opts.pincode\)/);
-  assert.match(source, /if \(opts.category && opts.category !== "all"\)/);
-  assert.doesNotMatch(source, /METRO_ALIASES/);
+  assert.match(source, /locationSearchTerms\(opts\.location === "all" \? "" : opts\.location\)/);
+  assert.match(source, /\.map\(locationFilterTerm\)/);
+  assert.match(source, /q = q\.ilike\("city", `%\$\{cityTerms\[0\]\}%`\)/);
+  assert.match(source, /q = q\.or\(cityTerms\.map\(\(term\) => `city\.ilike\.%\$\{term\}%`\)\.join\(","\)\)/);
+  assert.match(source, /const pincode = sanitizeTerm\(opts\.pincode\)/);
+  assert.match(source, /if \(opts\.category && opts\.category !== "all"\)/);
+});
+
+test("metro alias groups live in one shared module used by search and pincode verification", async () => {
+  const route = await readFile(new URL("../src/app/api/location/verify-pincode/route.js", import.meta.url), "utf8");
+  assert.match(route, /from "@\/lib\/location-aliases"/);
+  assert.doesNotMatch(route, /const METRO_ALIASES =/);
+  const professionals = await readFile(new URL("../src/lib/data/professionals.js", import.meta.url), "utf8");
+  assert.match(professionals, /from "\.\.\/location-aliases\.js"/);
+  assert.doesNotMatch(professionals, /const METRO_ALIASES =/);
 });

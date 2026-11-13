@@ -1,28 +1,11 @@
 import { NextResponse } from "next/server";
+import { METRO_ALIASES, normalizeLocationName as stripSpecial } from "@/lib/location-aliases";
 
 // In-memory cache: pincode → verified data (immutable from India Post)
 const PINCODE_CACHE = new Map();
 
-// Metro / large-city aliases — a user typing "Hyderabad" must match 501218's K.V.Rangareddy district
-const METRO_ALIASES = {
-  hyderabad:   ["hyderabad", "secunderabad", "cyberabad", "rangareddy", "kvrangareddy", "shamshabad", "medchal", "ranga reddy"],
-  rangareddy:  ["hyderabad", "secunderabad", "rangareddy", "kvrangareddy", "shamshabad"],
-  bangalore:   ["bangalore", "bengaluru", "bengaluru urban", "bengaluru rural"],
-  bengaluru:   ["bangalore", "bengaluru", "bengaluru urban", "bengaluru rural"],
-  mumbai:      ["mumbai", "bombay", "navi mumbai", "thane", "mumbai suburban", "mumbai city"],
-  delhi:       ["delhi", "new delhi", "central delhi", "south delhi", "north delhi", "east delhi", "west delhi"],
-  "new delhi": ["delhi", "new delhi", "central delhi"],
-  kolkata:     ["kolkata", "calcutta", "howrah"],
-  chennai:     ["chennai", "madras"],
-  gurgaon:     ["gurgaon", "gurugram"],
-  gurugram:    ["gurgaon", "gurugram"],
-  noida:       ["noida", "greater noida", "gautam buddha nagar"],
-  pune:        ["pune", "pimpri-chinchwad"],
-};
-
-function stripSpecial(s) {
-  return String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "").trim();
-}
+// Metro / large-city aliases — a user typing "Hyderabad" must match 501218's
+// K.V.Rangareddy district. Shared with directory search in @/lib/location-aliases.
 
 /**
  * Returns true if `inputCity` belongs to the set of valid cities for the pincode.
