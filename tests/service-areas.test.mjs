@@ -127,6 +127,38 @@ test("a stored service_areas value maps onto the professional record", async () 
   assert.equal(rows[0].city, "K.V.Rangareddy");
 });
 
+test("before the schema is applied, a service_areas column error retries with the plain literal filter", async () => {
+  const calls = [];
+  const failing = {
+    from: () => {
+      const builder = {
+        select: () => builder,
+        eq: () => builder,
+        ilike: (column, pattern) => { calls.push(["ilike", column, pattern]); return builder; },
+        or: (filters) => { calls.push(["or", filters]); return builder; },
+        gte: () => builder, gt: () => builder, lt: () => builder, lte: () => builder,
+        contains: () => builder, order: () => builder, limit: () => builder,
+        range: async () => {
+          if (calls.some(([kind, f]) => kind === "or" && String(f).includes("service_areas"))) {
+            return { data: null, error: { message: "column professionals.service_areas does not exist" }, count: null };
+          }
+          return { data: [], error: null, count: 0 };
+        },
+      };
+      return builder;
+    },
+  };
+  const { rows, total } = await queryProfessionals(failing, { location: "Hyderabad" });
+  // First attempt used the OR form, the retry fell back to the literal ilike
+  const orCalls = calls.filter(([kind]) => kind === "or");
+  const ilikeCity = calls.filter(([kind, col]) => kind === "ilike" && col === "city");
+  assert.equal(orCalls.length, 1);
+  assert.equal(ilikeCity.length, 1);
+  assert.equal(ilikeCity[0][2], "%Hyderabad%");
+  assert.deepEqual(rows, []);
+  assert.equal(total, 0);
+});
+
 test("missing or malformed service_areas maps to an empty list", async () => {
   const base = { id: "p1", name: "Pro", category: "Plumber", city: "Pune", services: [], credentials: [], reviews: [] };
   const { rows: noField } = await queryProfessionals(stubSupabase([{ ...base }], []), {});
