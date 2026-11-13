@@ -28,6 +28,10 @@ test("a metro search expands to its alternate names and area/district names", ()
   const mumbai = locationSearchTerms("Mumbai");
   assert.ok(mumbai.includes("bombay"));
   assert.ok(mumbai.includes("mumbai suburban"));
+
+  const delhi = locationSearchTerms("Delhi");
+  assert.ok(delhi.includes("new delhi"));
+  assert.ok(delhi.includes("south delhi"));
 });
 
 test("search expansion never crosses into separate neighbouring cities", () => {
@@ -38,7 +42,11 @@ test("search expansion never crosses into separate neighbouring cities", () => {
   for (const term of locationSearchTerms("Kolkata")) assert.notEqual(term, "howrah");
   for (const term of locationSearchTerms("Pune")) assert.notEqual(term, "pimpri-chinchwad");
   for (const term of locationSearchTerms("Hyderabad")) assert.notEqual(term, "medchal");
-  for (const term of locationSearchTerms("Noida")) assert.notEqual(term, "greater noida");
+  // New Delhi is part of Delhi but not the whole of it, and Gautam Buddha
+  // Nagar holds both Noida and Greater Noida - both stay literal.
+  assert.deepEqual(locationSearchTerms("New Delhi"), ["New Delhi"]);
+  assert.deepEqual(locationSearchTerms("Noida"), ["Noida"]);
+  for (const term of locationSearchTerms("Delhi")) assert.notEqual(term, "gautam buddha nagar");
 });
 
 test("area and district names searched directly stay literal (no reverse widening)", () => {
