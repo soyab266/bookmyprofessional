@@ -1,7 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { byPincodeProximity } from "@/lib/pincode";
 import { locationFilterTerm } from "../location-filter.js";
-import { canonicalServiceArea, servesArea } from "../service-areas.js";
+import { canonicalServiceArea, sameCitySpellings, servesArea } from "../service-areas.js";
 import { byDistanceFrom } from "@/lib/geo";
 import { listLocations, DEFAULT_LOCATIONS } from "./locations";
 
@@ -161,7 +161,14 @@ function applyFilters(query, opts) {
     ? null
     : canonicalServiceArea(opts.location === "all" ? "" : opts.location);
   if (city && servedCity) {
-    q = q.or(`city.ilike.%${city}%,service_areas.cs.{"${servedCity}"}`);
+    // Match stored addresses under every same-city spelling (e.g. a "Gurgaon"
+    // search also finds "Gurugram" addresses) plus the canonical declared area.
+    const clauses = sameCitySpellings(opts.location === "all" ? "" : opts.location)
+      .map(locationFilterTerm)
+      .filter(Boolean)
+      .map((spelling) => `city.ilike.%${spelling}%`);
+    clauses.push(`service_areas.cs.{"${servedCity}"}`);
+    q = q.or(clauses.join(","));
   } else if (city) {
     q = q.ilike("city", `%${city}%`);
   }
@@ -213,7 +220,10 @@ function clientFilter(rows, opts) {
     if (opts.location && opts.location !== "all") {
       const servedCity = canonicalServiceArea(opts.location);
       const declared = servedCity ? servesArea(pro, servedCity) : false;
-      if (!declared && !(pro.location || "").toLowerCase().includes(opts.location.toLowerCase())) return false;
+      const literal = sameCitySpellings(opts.location).some((spelling) =>
+        (pro.location || "").toLowerCase().includes(spelling.toLowerCase())
+      );
+      if (!declared && !literal) return false;
     }
 
     if (opts.pincode) {
