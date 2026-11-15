@@ -17,12 +17,15 @@ test("PostgREST filter and wildcard punctuation remains sanitized", () => {
   }
 });
 
-test("server city query uses the literal-safe term without changing other filters or adding aliases", async () => {
+test("server city query uses the literal-safe term without changing other filters or adding metro aliases", async () => {
   const source = await readFile(new URL("../src/lib/data/professionals.js", import.meta.url), "utf8");
   assert.match(source, /const city = locationFilterTerm\(opts.location === "all" \? "" : opts.location\)/);
-  // Coverage-city searches also match a pro's own declared Areas served;
-  // every other place keeps the literal city ilike.
-  assert.match(source, /city\.ilike\.%\$\{city\}%,service_areas\.cs\./);
+  // Coverage-city searches also match a pro's own declared Areas served, with
+  // stored addresses matched under exact same-city spellings (Gurgaon/Gurugram,
+  // Bengaluru/Bangalore); every other place keeps the literal city ilike.
+  assert.match(source, /sameCitySpellings\(opts\.location === "all" \? "" : opts\.location\)/);
+  assert.match(source, /`city\.ilike\.%\$\{spelling\}%`/);
+  assert.match(source, /service_areas\.cs\.\{\"\$\{servedCity\}\"\}/);
   assert.match(source, /q = q\.ilike\("city", `%\$\{city\}%`\)/);
   assert.match(source, /const pincode = sanitizeTerm\(opts.pincode\)/);
   assert.match(source, /if \(opts.category && opts.category !== "all"\)/);
