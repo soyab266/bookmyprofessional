@@ -6,6 +6,7 @@ register(new URL("./alias-hooks.mjs", import.meta.url));
 const {
   SERVICE_AREA_CITIES,
   canonicalServiceArea,
+  sameCitySpellings,
   sanitizeServiceAreas,
   servesArea,
 } = await import("../src/lib/service-areas.js");
@@ -27,9 +28,35 @@ test("canonicalServiceArea never invents coverage for unlisted places", () => {
   assert.equal(canonicalServiceArea("Ranga Reddy"), null);
   assert.equal(canonicalServiceArea("Secunderabad"), null);
   assert.equal(canonicalServiceArea("Aligarh"), null);
-  assert.equal(canonicalServiceArea("Bengaluru"), null); // rename, not a curated city spelling
   assert.equal(canonicalServiceArea(""), null);
   assert.equal(canonicalServiceArea(null), null);
+});
+
+test("same-city spelling aliases resolve to their canonical coverage city", () => {
+  assert.equal(canonicalServiceArea("Gurgaon"), "Gurugram");
+  assert.equal(canonicalServiceArea("gurgaon"), "Gurugram");
+  assert.equal(canonicalServiceArea("Gurgaon, India"), "Gurugram");
+  assert.equal(canonicalServiceArea("Gurugram"), "Gurugram");
+  assert.equal(canonicalServiceArea("Bengaluru"), "Bangalore");
+  assert.equal(canonicalServiceArea("Bengaluru, India"), "Bangalore");
+  assert.equal(canonicalServiceArea("Bangalore"), "Bangalore");
+  // Aliases are exact same-city spellings only - nearby places never resolve
+  assert.equal(canonicalServiceArea("Faridabad"), null);
+  assert.equal(canonicalServiceArea("Secunderabad"), null);
+});
+
+test("sameCitySpellings covers both spellings of an aliased city and nothing more", () => {
+  assert.deepEqual(sameCitySpellings("Gurgaon"), ["Gurgaon", "Gurugram"]);
+  assert.deepEqual(sameCitySpellings("Gurugram"), ["Gurugram", "gurgaon"]);
+  assert.deepEqual(sameCitySpellings("Bengaluru"), ["Bengaluru", "Bangalore"]);
+  assert.deepEqual(sameCitySpellings("Bangalore"), ["Bangalore", "bengaluru"]);
+  // Unaliased cities keep their single literal spelling
+  assert.deepEqual(sameCitySpellings("Hyderabad"), ["Hyderabad"]);
+  assert.deepEqual(sameCitySpellings("K.V.Rangareddy"), ["K.V.Rangareddy"]);
+});
+
+test("aliases stay canonical when saved through sanitizeServiceAreas", () => {
+  assert.deepEqual(sanitizeServiceAreas(["Gurgaon", "gurugram", "Bengaluru"]), ["Gurugram", "Bangalore"]);
 });
 
 test("sanitizeServiceAreas keeps only known cities, canonical, de-duplicated", () => {
@@ -95,6 +122,24 @@ test("a dropdown-label search (City, Country) also matches declared Areas served
   const orCall = calls.find(([kind]) => kind === "or");
   assert.ok(orCall);
   assert.ok(orCall[1].includes('service_areas.cs.{"Hyderabad"}'));
+});
+
+test("an alias search matches the stored city under either spelling AND the canonical declared area", async () => {
+  const calls = [];
+  await queryProfessionals(stubSupabase([], calls), { location: "Gurgaon" });
+  const orCall = calls.find(([kind]) => kind === "or");
+  assert.ok(orCall, "expected an OR filter for an alias search");
+  assert.ok(orCall[1].includes("city.ilike.%Gurgaon%"), "keeps the searched spelling");
+  assert.ok(orCall[1].includes("city.ilike.%Gurugram%"), "adds the canonical spelling");
+  assert.ok(orCall[1].includes('service_areas.cs.{"Gurugram"}'), "canonical declared area");
+});
+
+test("a canonical-spelling search of an aliased city also covers its other spelling", async () => {
+  const calls = [];
+  await queryProfessionals(stubSupabase([], calls), { location: "Gurugram" });
+  const orCall = calls.find(([kind]) => kind === "or");
+  assert.ok(orCall);
+  assert.equal(orCall[1], 'city.ilike.%Gurugram%,city.ilike.%gurgaon%,service_areas.cs.{"Gurugram"}');
 });
 
 test("cities outside the curated list keep exact literal matching with no service-area lookup", async () => {
