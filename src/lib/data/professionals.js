@@ -9,7 +9,7 @@ const DEFAULT_REVIEW_AVATAR =
 
 export const DEFAULT_PAGE_SIZE = 8;
 
-function buildLocationMap(locations) {
+export function buildLocationMap(locations) {
   const map = {};
   (locations || []).forEach((loc) => {
     if (loc.city) map[loc.city.toLowerCase()] = loc;
@@ -60,7 +60,7 @@ export function getProfessionalTitle(pro) {
   return "Professional";
 }
 
-function mapProfessional(row, locMap) {
+export function mapProfessional(row, locMap) {
   const city = row.city || "";
   const loc = city ? locMap[city.toLowerCase()] : null;
   const hourlyRate = Number(row.hourly_rate) || 0;
@@ -76,7 +76,10 @@ function mapProfessional(row, locMap) {
     subcategory: row.subcategory || "",
     specialty: row.specialty || "",
     ...summarizeReviews(reviews),
-    location: loc ? `${city}, ${loc.country}` : city,
+    // Append the country only when the location entry actually has one: directory-
+    // merged entries carry just a city, and a missing country must never render
+    // as the literal text "undefined".
+    location: loc && loc.country ? `${city}, ${loc.country}` : city,
     city,
     latitude: row.latitude ?? loc?.latitude ?? null,
     longitude: row.longitude ?? loc?.longitude ?? null,
