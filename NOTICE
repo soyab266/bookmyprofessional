@@ -1,0 +1,17 @@
+Data attribution
+----------------
+Pincode district/state names are derived from the All India Pincode
+Directory, Department of Posts, Government of India, published on the Open
+Government Data Platform (https://www.data.gov.in) under the Government
+Open Data License (GODL-India-1.0).
+
+Pincode area centroid coordinates are obtained from OpenStreetMap via
+Nominatim (https://nominatim.openstreetmap.org), (c) OpenStreetMap
+contributors, available under the Open Database License (ODbL):
+https://www.openstreetmap.org/copyright
+
+In accordance with the ODbL and the OSMF Attribution Guidelines, the app
+displays visible credit linking to https://www.openstreetmap.org/copyright
+wherever approximate area distances derived from this data are shown.
+Coordinates are reviewed against independent map sources before use; the
+SQL seed records the per-pincode source and review outcome.

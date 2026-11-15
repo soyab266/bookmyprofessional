@@ -61,9 +61,12 @@ export function getProfessionalTitle(pro) {
   return "Professional";
 }
 
-export function mapProfessional(row, locMap) {
+export function mapProfessional(row, locMap, pinMap = null) {
   const city = row.city || "";
   const loc = city ? locMap[city.toLowerCase()] : null;
+  // Reviewed pincode area centroid (pincodes_lookup) outranks the coarser city
+  // centroid; both lose to coordinates stored on the professional row itself.
+  const pin = row.pincode && pinMap ? pinMap.get(row.pincode) || null : null;
   const hourlyRate = Number(row.hourly_rate) || 0;
   const reviews = (row.reviews || []).map(mapReview);
   const displayTitle = getProfessionalTitle(row);
@@ -79,8 +82,16 @@ export function mapProfessional(row, locMap) {
     ...summarizeReviews(reviews),
     location: loc ? `${city}, ${loc.country}` : city,
     city,
-    latitude: row.latitude ?? loc?.latitude ?? null,
-    longitude: row.longitude ?? loc?.longitude ?? null,
+    latitude: row.latitude ?? pin?.latitude ?? loc?.latitude ?? null,
+    longitude: row.longitude ?? pin?.longitude ?? loc?.longitude ?? null,
+    distanceSource:
+      row.latitude != null && row.longitude != null
+        ? "profile"
+        : pin
+          ? "pincode"
+          : loc?.latitude != null
+            ? "city"
+            : null,
     experienceYears: row.experience_years || 0,
     verified: Boolean(row.verified === true && row.verification_status === "approved"),
     verificationStatus: row.verification_status || "not_submitted",
@@ -290,6 +301,24 @@ function fallbackList(seed, locations, opts, sortBy, page, pageSize, near = null
 }
 
 // ponytail: mock seed fallback until supabase/schema.sql is applied and approved pros exist.
+// Reviewed pincode area centroids for the near-me fallback chain. Returns null
+// when the lookup table is absent or errors, so callers fall back to the city
+// centroid or "distance unknown" exactly as before.
+async function fetchPincodeCentroids(supabase, rows) {
+  const pincodes = [...new Set(rows.map((r) => r.pincode).filter(Boolean))];
+  if (!pincodes.length) return null;
+  try {
+    const { data, error } = await supabase
+      .from("pincodes_lookup")
+      .select("pincode, latitude, longitude")
+      .in("pincode", pincodes);
+    if (error || !data) return null;
+    return new Map(data.map((r) => [r.pincode, r]));
+  } catch {
+    return null;
+  }
+}
+
 // Remove the seed fallback once the professionals table is populated in every environment.
 export async function queryProfessionals(supabase, options = {}) {
   const {
@@ -341,8 +370,9 @@ export async function queryProfessionals(supabase, options = {}) {
       if (!nearbyError && nearby && nearby.length > 0) {
         const locs = locations || (await listLocations());
         const locMap = buildLocationMap(locs);
+        const pinMap = await fetchPincodeCentroids(supabase, nearby);
         const rows = nearby
-          .map((row) => mapProfessional(row, locMap))
+          .map((row) => mapProfessional(row, locMap, pinMap))
           .sort(byDistanceFrom(near));
         const start = (safePage - 1) * safeSize;
         return {
