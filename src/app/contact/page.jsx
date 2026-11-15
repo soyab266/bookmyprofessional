@@ -475,8 +475,12 @@ export default function ContactPage() {
                       <span className="font-semibold text-dark-900">09:00 – 18:00 IST</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="font-medium">Sunday & Public Holidays</span>
+                      <span className="font-medium">Sunday</span>
                       <span className="font-semibold text-primary-600">Closed</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">Public Holidays</span>
+                      <span className="font-semibold text-primary-600">On-Call Emergency</span>
                     </div>
                   </div>
                 </div>
