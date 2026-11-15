@@ -1,15 +1,16 @@
 import { createClient } from "@/lib/supabase/client";
 import { parseInclusions } from "@/lib/inclusions";
 import { validatePayoutDetails, getBankNameFromIFSC } from "@/lib/payout-validation";
+import { sanitizeServiceAreas } from "@/lib/service-areas";
 
-const EMPTY = { experienceYears: 0, specialty: "", city: "", pincode: "", category: "", subcategory: "", role_title: "", services: [], credentials: [], payout_details: null };
+const EMPTY = { experienceYears: 0, specialty: "", city: "", pincode: "", category: "", subcategory: "", role_title: "", services: [], credentials: [], payout_details: null, serviceAreas: [] };
 // ponytail: empty profile on error keeps the vendor page alive while supabase/schema.sql is unapplied.
 export async function getVendorProfile(professionalId) {
   if (!professionalId) return { ...EMPTY };
   try {
     const supabase = createClient();
     const FULL_COLUMNS =
-      "experience_years, specialty, city, name, image_url, verification_status, hourly_rate, category, subcategory, role_title, pincode, availability, payout_details";
+      "experience_years, specialty, city, name, image_url, verification_status, hourly_rate, category, subcategory, role_title, pincode, availability, payout_details, service_areas";
     const BASE_COLUMNS =
       "experience_years, specialty, city, name, image_url, verification_status, hourly_rate, category, availability";
     const [{ data: services }, { data: credentials }] = await Promise.all([
@@ -43,6 +44,7 @@ export async function getVendorProfile(professionalId) {
       hourlyRate: Number(pro?.hourly_rate) || 0,
       availability: pro?.availability || null,
       payout_details: pro?.payout_details || null,
+      serviceAreas: Array.isArray(pro?.service_areas) ? pro.service_areas : [],
       services: services || [],
       credentials: credentials || [],
     };
@@ -108,11 +110,15 @@ export async function updateVendorBasics(professionalId, patch) {
     subcategory: cleanSub,
     role_title: cleanTitle,
   };
+  let serviceAreasPersisted = true;
   let { error } = await supabase
     .from("professionals")
-    .update({ ...row, pincode: cleanPin || "" })
+    .update({ ...row, pincode: cleanPin || "", service_areas: sanitizeServiceAreas(patch.serviceAreas) })
     .eq("id", professionalId);
   if (error) {
+    // Any fallback save drops service_areas (e.g. column not yet applied) -
+    // the caller must tell the user the area selection was NOT stored.
+    serviceAreasPersisted = false;
     // If subcategory/role_title or pincode columns don't exist yet, retry with base fields
     const baseRow = {
       experience_years: Number(patch.experienceYears) || 0,
@@ -124,7 +130,14 @@ export async function updateVendorBasics(professionalId, patch) {
     ({ error } = await supabase.from("professionals").update(baseRow).eq("id", professionalId));
   }
   if (error) throw error;
-  return { ...patch, subcategory: cleanSub, role_title: cleanTitle, pincode: cleanPin };
+  return {
+    ...patch,
+    subcategory: cleanSub,
+    role_title: cleanTitle,
+    pincode: cleanPin,
+    serviceAreas: sanitizeServiceAreas(patch.serviceAreas),
+    serviceAreasPersisted,
+  };
 }
 
 export async function updateVendorSchedule(professionalId, availability) {

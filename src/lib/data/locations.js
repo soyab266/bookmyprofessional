@@ -13,6 +13,11 @@ export const DEFAULT_LOCATIONS = [
   { id: "Bangalore", label: "Bangalore, India", city: "Bangalore", country: "India", latitude: 12.9716, longitude: 77.5946 },
   { id: "Hyderabad", label: "Hyderabad, India", city: "Hyderabad", country: "India", latitude: 17.385, longitude: 78.4867 },
   { id: "Pune", label: "Pune, India", city: "Pune", country: "India", latitude: 18.5204, longitude: 73.8567 },
+  { id: "Chennai", label: "Chennai, India", city: "Chennai", country: "India", latitude: 13.0827, longitude: 80.2707 },
+  { id: "Kolkata", label: "Kolkata, India", city: "Kolkata", country: "India", latitude: 22.5726, longitude: 88.3639 },
+  { id: "Ahmedabad", label: "Ahmedabad, India", city: "Ahmedabad", country: "India", latitude: 23.0225, longitude: 72.5714 },
+  { id: "Gurugram", label: "Gurugram, India", city: "Gurugram", country: "India", latitude: 28.4595, longitude: 77.0266 },
+  { id: "Noida", label: "Noida, India", city: "Noida", country: "India", latitude: 28.5355, longitude: 77.391 },
 ];
 
 export async function listLocations() {
