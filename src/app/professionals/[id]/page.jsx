@@ -7,6 +7,8 @@ import Button from "@/components/Button";
 import { useMarketplace } from "@/context/MarketplaceContext";
 import { useAuth } from "@/context/AuthContext";
 import { reportReview } from "@/lib/data/reviews";
+import { getProfessionalById } from "@/lib/data/professionals";
+import { profileViewState, PROFILE_ID_RE } from "@/lib/profile-view";
 import { isWished, addWish, removeWish } from "@/lib/data/wishlist";
 import { ikImage } from "@/lib/imagekit";
 import {
@@ -40,7 +42,7 @@ import { getNextAvailableSlot, formatTime24to12 } from "@/lib/data/bookings";
 export default function ProfessionalDetailPage({ params }) {
   const unwrappedParams = use(params);
   const proId = unwrappedParams.id;
-  const { professionals, startBooking, isLoadingProfessionals } = useMarketplace();
+  const { professionals, startBooking, isCatalogLoading } = useMarketplace();
   const { showToast, user, openAuthModal } = useAuth();
 
   const [activeTab, setActiveTab] = useState("services"); // "services" | "about" | "credentials" | "reviews" | "schedule"
@@ -58,9 +60,34 @@ export default function ProfessionalDetailPage({ params }) {
   };
 
   // Find professional by id or slug. No silent fallback: an unknown id must not render someone else.
-  const pro =
+  const catalogPro =
     professionals.find((p) => p.id === proId) ||
     professionals.find((p) => p.name.toLowerCase().replace(/[^a-z0-9]/g, "-").includes(proId));
+
+  // Confirmation fallback: a catalog miss is not proof of absence (the shared
+  // 500-row catalog can lag or fail while the profile exists), so check the
+  // profile's own by-id read before showing "Professional not found".
+  const isUuidId = PROFILE_ID_RE.test(proId || "");
+  // Keyed by id so a client-side jump to another profile never reuses the
+  // previous profile's fallback result.
+  const [direct, setDirect] = useState({ id: null, status: null, pro: null });
+  const directStatus = direct.id === proId ? direct.status : null;
+  const directPro = direct.id === proId ? direct.pro : null;
+
+  useEffect(() => {
+    if (isCatalogLoading || catalogPro || !isUuidId || directStatus) return;
+    let active = true;
+    getProfessionalById(proId).then(({ status, pro: found }) => {
+      if (!active) return;
+      setDirect({ id: proId, status, pro: found });
+    });
+    return () => {
+      active = false;
+    };
+  }, [isCatalogLoading, catalogPro, proId, isUuidId, directStatus]);
+
+  const pro = catalogPro || directPro;
+  const viewState = profileViewState({ catalogPro, directPro, directStatus, isCatalogLoading, proId });
   const isOwnProfile = !!(user && pro && user.id === pro.id);
 
   const [liveAvailability, setLiveAvailability] = useState(null);
@@ -141,16 +168,20 @@ export default function ProfessionalDetailPage({ params }) {
     );
   };
 
-  if (!pro) {
+  if (viewState !== "found") {
     return (
       <div className="flex min-h-screen flex-col bg-background text-dark-800">
         <Navbar />
         <main className="flex-1 flex items-center justify-center p-8 text-center">
           <div>
             <h1 className="font-heading text-2xl font-bold text-dark-900">
-              {isLoadingProfessionals ? "Loading professional…" : "Professional not found"}
+              {viewState === "loading"
+                ? "Loading professional…"
+                : viewState === "missing"
+                  ? "Professional not found"
+                  : "Unable to load this profile"}
             </h1>
-            {!isLoadingProfessionals && (
+            {viewState === "missing" && (
               <>
                 <p className="text-sm text-dark-500 mt-2">
                   This professional may have been removed or is no longer available.
@@ -161,6 +192,20 @@ export default function ProfessionalDetailPage({ params }) {
                 >
                   Browse Professionals
                 </Link>
+              </>
+            )}
+            {viewState === "unavailable" && (
+              <>
+                <p className="text-sm text-dark-500 mt-2">
+                  Something went wrong while loading this profile. Check your connection and try again.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => window.location.reload()}
+                  className="inline-flex items-center justify-center mt-5 px-5 py-2.5 rounded-xl bg-primary-500 hover:bg-primary-600 text-white text-xs font-semibold shadow-button transition-colors"
+                >
+                  Try Again
+                </button>
               </>
             )}
           </div>
