@@ -9,7 +9,7 @@ const DEFAULT_REVIEW_AVATAR =
 
 export const DEFAULT_PAGE_SIZE = 8;
 
-function buildLocationMap(locations) {
+export function buildLocationMap(locations) {
   const map = {};
   (locations || []).forEach((loc) => {
     if (loc.city) map[loc.city.toLowerCase()] = loc;
@@ -60,7 +60,7 @@ export function getProfessionalTitle(pro) {
   return "Professional";
 }
 
-function mapProfessional(row, locMap) {
+export function mapProfessional(row, locMap) {
   const city = row.city || "";
   const loc = city ? locMap[city.toLowerCase()] : null;
   const hourlyRate = Number(row.hourly_rate) || 0;
@@ -377,6 +377,47 @@ export async function queryProfessionals(supabase, options = {}) {
   }
 
   return fallbackList(seed, locations, opts, sortBy, safePage, safeSize, near);
+}
+
+// Single-profile read for /professionals/[id]: the shared catalog (500-row cap,
+// multi-table join) can lag or fail while the profile exists, so the detail page
+// confirms a catalog miss with one bounded by-id query before saying "not found".
+// Status contract: only the admin-backed API read (which bypasses RLS) may call a
+// profile "missing". Network/server failures and the RLS-limited anon fallback
+// return "unknown" — a failed read is never evidence of absence.
+// Uses the same is_active=true predicate and mapped shape as the public directory.
+export async function getProfessionalById(id, { fetcher = fetch } = {}) {
+  if (!id) return { status: "missing", pro: null };
+  try {
+    const res = await fetcher(`/api/professionals?id=${encodeURIComponent(id)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.rows)) {
+        return data.rows[0]
+          ? { status: "found", pro: data.rows[0] }
+          : { status: "missing", pro: null };
+      }
+      return { status: "unknown", pro: null }; // malformed success body
+    }
+    // Non-OK API response: fall through to the anon client query below.
+  } catch {
+    // Network failure: fall through to the anon client query below.
+  }
+  if (typeof window === "undefined") return { status: "unknown", pro: null };
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("professionals")
+      .select("*, services(*), credentials(*), reviews(*)")
+      .eq("id", id)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (error || !data) return { status: "unknown", pro: null }; // RLS/empty anon reads cannot confirm absence
+    const locs = await listLocations();
+    return { status: "found", pro: mapProfessional(data, buildLocationMap(locs)) };
+  } catch {
+    return { status: "unknown", pro: null };
+  }
 }
 
 // ponytail: in browser, fetches through /api/professionals so admin service role can bypass RLS
