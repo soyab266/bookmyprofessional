@@ -114,7 +114,7 @@ export default function ContactPage() {
       icon: Phone,
       title: "Direct Phone & WhatsApp",
       details: "+91 89193 28705",
-      subtext: "Mon – Sat, 8:00 AM – 8:00 PM IST",
+      subtext: "Mon – Sat, 9:00 AM – 6:00 PM IST",
       badge: "Quick Response",
       actionText: "Call Now",
       href: "tel:+918919328705",
@@ -468,14 +468,18 @@ export default function ContactPage() {
                   <div className="space-y-2.5 text-xs text-dark-700 pt-2 border-t border-border">
                     <div className="flex justify-between">
                       <span className="font-medium">Monday – Friday</span>
-                      <span className="font-semibold text-dark-900">09:00 – 20:00 IST</span>
+                      <span className="font-semibold text-dark-900">09:00 – 18:00 IST</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="font-medium">Saturday</span>
                       <span className="font-semibold text-dark-900">09:00 – 18:00 IST</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="font-medium">Sunday & Public Holidays</span>
+                      <span className="font-medium">Sunday</span>
+                      <span className="font-semibold text-primary-600">Closed</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="font-medium">Public Holidays</span>
                       <span className="font-semibold text-primary-600">On-Call Emergency</span>
                     </div>
                   </div>
