@@ -11,18 +11,50 @@ import { DEFAULT_LOCATIONS } from "./data/locations.js";
 
 export const SERVICE_AREA_CITIES = DEFAULT_LOCATIONS.map((loc) => loc.city);
 
+// Exact same-city spelling aliases: the curated list keeps one canonical
+// spelling per city, and each alias is that SAME city under its other common
+// spelling. No metro, district, or inferred geography - an alias resolves to
+// exactly its own canonical city, nothing around it.
+const SAME_CITY_SPELLINGS = new Map([
+  ["gurgaon", "gurugram"],
+  ["bengaluru", "bangalore"],
+]);
+
 // Resolve a searched location (free text or a "City, Country" dropdown label)
-// to its canonical coverage city, case-insensitively. Returns null for
-// anything outside the curated list, so unlisted cities never match against
-// service areas.
+// to its canonical coverage city, case-insensitively, honouring the same-city
+// spelling aliases. Returns null for anything outside the curated list, so
+// unlisted cities never match against service areas.
 export function canonicalServiceArea(term) {
-  const value = String(term || "").trim().toLowerCase();
-  if (!value) return null;
+  const raw = String(term || "").trim().toLowerCase();
+  if (!raw) return null;
+  const base = raw.split(",")[0].trim();
+  const aliased = SAME_CITY_SPELLINGS.get(base) ?? base;
   for (const city of SERVICE_AREA_CITIES) {
-    const lower = city.toLowerCase();
-    if (value === lower || value.startsWith(`${lower},`)) return city;
+    if (aliased === city.toLowerCase()) return city;
   }
   return null;
+}
+
+// Every exact same-city spelling of a searched term, for matching stored
+// address text: the searched spelling plus, when the term names a curated
+// city (directly or via an alias), that city's other spelling. A "Gurgaon"
+// search also matches addresses written "Gurugram" and vice versa; unlisted
+// places keep their single literal spelling, unchanged.
+export function sameCitySpellings(term) {
+  const base = String(term || "").trim().split(",")[0].trim();
+  const out = [];
+  const push = (spelling) => {
+    if (spelling && !out.some((s) => s.toLowerCase() === spelling.toLowerCase())) out.push(spelling);
+  };
+  push(base);
+  const canonical = canonicalServiceArea(term);
+  if (canonical) {
+    push(canonical);
+    for (const [alias, city] of SAME_CITY_SPELLINGS) {
+      if (city === canonical.toLowerCase()) push(alias);
+    }
+  }
+  return out;
 }
 
 // Keep only known coverage cities, trimmed, de-duplicated, in canonical case.
