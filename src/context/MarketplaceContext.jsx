@@ -65,6 +65,9 @@ export function MarketplaceProvider({ children }) {
   const [filteredProfessionals, setFilteredProfessionals] = useState([]);
   const [locations, setLocations] = useState(DEFAULT_LOCATIONS);
   const [isLoadingProfessionals, setIsLoadingProfessionals] = useState(true);
+  // Owned solely by the catalog effect below. The detail page must not treat
+  // the directory effect's (unrelated, faster) completion as "catalog done".
+  const [isCatalogLoading, setIsCatalogLoading] = useState(true);
   const [bookings, setBookings] = useState([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -159,6 +162,8 @@ export function MarketplaceProvider({ children }) {
       pathname.startsWith("/professionals/") ||
       pathname.startsWith("/book/");
 
+    if (active) setIsCatalogLoading(needsCatalog);
+
     (async () => {
       try {
         const locs = await listLocations();
@@ -174,7 +179,10 @@ export function MarketplaceProvider({ children }) {
         });
         if (active && rows.length > 0) setProfessionals(rows);
       } finally {
-        if (active) setIsLoadingProfessionals(false);
+        if (active) {
+          setIsLoadingProfessionals(false);
+          setIsCatalogLoading(false);
+        }
       }
     })();
 
@@ -512,6 +520,7 @@ export function MarketplaceProvider({ children }) {
         filteredProfessionals,
         locations,
         isLoadingProfessionals,
+        isCatalogLoading,
         bookings,
         customerProfile,
         proVendorState,
