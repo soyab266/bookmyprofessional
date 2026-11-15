@@ -12,7 +12,7 @@ const {
 const { queryProfessionals } = await import("../src/lib/data/professionals.js");
 
 test("the coverage cities offered for Areas served are the curated locations", () => {
-  assert.deepEqual(SERVICE_AREA_CITIES, ["Mumbai", "Delhi", "Bangalore", "Hyderabad", "Pune"]);
+  assert.deepEqual(SERVICE_AREA_CITIES, ["Mumbai", "Delhi", "Bangalore", "Hyderabad", "Pune", "Chennai", "Kolkata", "Ahmedabad", "Gurugram", "Noida"]);
 });
 
 test("canonicalServiceArea resolves coverage cities case-insensitively, including dropdown labels", () => {
