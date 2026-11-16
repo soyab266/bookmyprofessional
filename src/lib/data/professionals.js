@@ -80,7 +80,10 @@ export function mapProfessional(row, locMap, pinMap = null) {
     subcategory: row.subcategory || "",
     specialty: row.specialty || "",
     ...summarizeReviews(reviews),
-    location: loc ? `${city}, ${loc.country}` : city,
+    // Append the country only when the location entry actually has one: directory-
+    // merged entries carry just a city, and a missing country must never render
+    // as the literal text "undefined".
+    location: loc && loc.country ? `${city}, ${loc.country}` : city,
     city,
     latitude: row.latitude ?? pin?.latitude ?? loc?.latitude ?? null,
     longitude: row.longitude ?? pin?.longitude ?? loc?.longitude ?? null,
