@@ -84,7 +84,12 @@ insert into public.locations (city, region, country, latitude, longitude) values
   ('Delhi', 'Delhi', 'India', 28.6139, 77.2090),
   ('Bangalore', 'Karnataka', 'India', 12.9716, 77.5946),
   ('Hyderabad', 'Telangana', 'India', 17.3850, 78.4867),
-  ('Pune', 'Maharashtra', 'India', 18.5204, 73.8567)
+  ('Pune', 'Maharashtra', 'India', 18.5204, 73.8567),
+  ('Chennai', 'Tamil Nadu', 'India', 13.0827, 80.2707),
+  ('Kolkata', 'West Bengal', 'India', 22.5726, 88.3639),
+  ('Ahmedabad', 'Gujarat', 'India', 23.0225, 72.5714),
+  ('Gurugram', 'Haryana', 'India', 28.4595, 77.0266),
+  ('Noida', 'Uttar Pradesh', 'India', 28.5355, 77.3910)
 on conflict (city, country) do nothing;
 
 -- ---------- professionals ----------
@@ -110,9 +115,15 @@ create table if not exists public.professionals (
   rating numeric(2,1) not null default 0,
   review_count int not null default 0,
   availability jsonb not null default '{}'::jsonb,
+  -- cities the professional declares they accept bookings from ("Areas served");
+  -- matching is by this explicit declaration, never by assumed district geography
+  service_areas text[] not null default '{}',
   is_active boolean not null default true,
   created_at timestamptz not null default now()
 );
+
+-- Ensure service_areas exists if the professionals table already existed
+alter table public.professionals add column if not exists service_areas text[] not null default '{}';
 
 create table if not exists public.services (
   id uuid primary key default gen_random_uuid(),

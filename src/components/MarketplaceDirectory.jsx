@@ -642,7 +642,16 @@ export default function MarketplaceDirectory({ preview = false, initialDirectory
             <LocateFixed className="h-4 w-4 mt-0.5 shrink-0 text-emerald-600" />
             <p className="text-xs text-dark-700">
               Showing professionals closest to your location first. Distances are
-              straight-line estimates.
+              approximate area estimates. Area data from{" "}
+              <a
+                href="https://www.openstreetmap.org/copyright"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline"
+              >
+                OpenStreetMap
+              </a>{" "}
+              contributors, available under the Open Database License (ODbL).
             </p>
           </div>
         )}
@@ -779,11 +788,13 @@ export default function MarketplaceDirectory({ preview = false, initialDirectory
                     <div className="flex items-center gap-1 text-xs text-dark-500 mt-1.5">
                       <MapPin className="h-3.5 w-3.5 text-dark-400 shrink-0" />
                       <span className="truncate">{pro.location}</span>
-                      {distanceToUserKm != null && (
+                      {distanceToUserKm != null ? (
                         <span className="shrink-0 font-semibold text-emerald-600">
-                          · {distanceToUserKm < 1 ? "<1" : Math.round(distanceToUserKm)} km away
+                          · ~{distanceToUserKm < 1 ? "<1" : Math.round(distanceToUserKm)} km away
                         </span>
-                      )}
+                      ) : nearCoords ? (
+                        <span className="shrink-0 text-dark-400">· Distance unavailable</span>
+                      ) : null}
                     </div>
 
                     {/* Bio snippet */}

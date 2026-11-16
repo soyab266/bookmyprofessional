@@ -1,11 +1,35 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { queryProfessionals } from "@/lib/data/professionals";
+import { queryProfessionals, mapProfessional, buildLocationMap } from "@/lib/data/professionals";
+import { listLocations } from "@/lib/data/locations";
 
 export async function GET(request) {
   try {
     const supabase = createAdminClient();
     const { searchParams } = new URL(request.url);
+
+    // Single-profile read for the detail page's confirmation fallback.
+    const id = searchParams.get("id");
+    if (id) {
+      const { data, error } = await supabase
+        .from("professionals")
+        .select("*, services(*), credentials(*), reviews(*)")
+        .eq("id", id)
+        .eq("is_active", true)
+        .maybeSingle();
+      if (error) throw error;
+      if (!data) {
+        return NextResponse.json({ rows: [], total: 0, page: 1, pageSize: 1, relaxedPincode: false });
+      }
+      const locs = await listLocations();
+      return NextResponse.json({
+        rows: [mapProfessional(data, buildLocationMap(locs))],
+        total: 1,
+        page: 1,
+        pageSize: 1,
+        relaxedPincode: false,
+      });
+    }
 
     const search = searchParams.get("search") || "";
     const category = searchParams.get("category") || "all";

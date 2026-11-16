@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/client";
 import { byPincodeProximity } from "@/lib/pincode";
 import { locationFilterTerm } from "../location-filter.js";
+import { canonicalServiceArea, sameCitySpellings, servesArea } from "../service-areas.js";
 import { byDistanceFrom } from "@/lib/geo";
 import { listLocations, DEFAULT_LOCATIONS } from "./locations";
 
@@ -60,9 +61,12 @@ export function getProfessionalTitle(pro) {
   return "Professional";
 }
 
-export function mapProfessional(row, locMap) {
+export function mapProfessional(row, locMap, pinMap = null) {
   const city = row.city || "";
   const loc = city ? locMap[city.toLowerCase()] : null;
+  // Reviewed pincode area centroid (pincodes_lookup) outranks the coarser city
+  // centroid; both lose to coordinates stored on the professional row itself.
+  const pin = row.pincode && pinMap ? pinMap.get(row.pincode) || null : null;
   const hourlyRate = Number(row.hourly_rate) || 0;
   const reviews = (row.reviews || []).map(mapReview);
   const displayTitle = getProfessionalTitle(row);
@@ -81,8 +85,16 @@ export function mapProfessional(row, locMap) {
     // as the literal text "undefined".
     location: loc && loc.country ? `${city}, ${loc.country}` : city,
     city,
-    latitude: row.latitude ?? loc?.latitude ?? null,
-    longitude: row.longitude ?? loc?.longitude ?? null,
+    latitude: row.latitude ?? pin?.latitude ?? loc?.latitude ?? null,
+    longitude: row.longitude ?? pin?.longitude ?? loc?.longitude ?? null,
+    distanceSource:
+      row.latitude != null && row.longitude != null
+        ? "profile"
+        : pin
+          ? "pincode"
+          : loc?.latitude != null
+            ? "city"
+            : null,
     experienceYears: row.experience_years || 0,
     verified: Boolean(row.verified === true && row.verification_status === "approved"),
     verificationStatus: row.verification_status || "not_submitted",
@@ -95,6 +107,9 @@ export function mapProfessional(row, locMap) {
     bio: row.bio || "",
     about: row.about || "",
     pincode: row.pincode || "",
+    serviceAreas: Array.isArray(row.service_areas)
+      ? row.service_areas.filter((area) => typeof area === "string")
+      : [],
     credentials: (row.credentials || []).map((c) => ({
       title: c.title,
       issuer: c.issuer,
@@ -153,7 +168,24 @@ function applyFilters(query, opts) {
 
   if (opts.category && opts.category !== "all") q = q.ilike("category", opts.category);
   const city = locationFilterTerm(opts.location === "all" ? "" : opts.location);
-  if (city) q = q.ilike("city", `%${city}%`);
+  // A coverage-city search also matches pros who declared that city in their
+  // "Areas served" list. Matching is the pro's own declaration, so stored
+  // addresses stay untouched and no district-wide geography is assumed.
+  const servedCity = opts.skipServiceAreas
+    ? null
+    : canonicalServiceArea(opts.location === "all" ? "" : opts.location);
+  if (city && servedCity) {
+    // Match stored addresses under every same-city spelling (e.g. a "Gurgaon"
+    // search also finds "Gurugram" addresses) plus the canonical declared area.
+    const clauses = sameCitySpellings(opts.location === "all" ? "" : opts.location)
+      .map(locationFilterTerm)
+      .filter(Boolean)
+      .map((spelling) => `city.ilike.%${spelling}%`);
+    clauses.push(`service_areas.cs.{"${servedCity}"}`);
+    q = q.or(clauses.join(","));
+  } else if (city) {
+    q = q.ilike("city", `%${city}%`);
+  }
   const pincode = sanitizeTerm(opts.pincode);
   if (pincode) q = q.ilike("pincode", `%${pincode}%`);
   if (opts.minRating > 0) q = q.gte("rating", opts.minRating);
@@ -200,7 +232,12 @@ function clientFilter(rows, opts) {
     }
 
     if (opts.location && opts.location !== "all") {
-      if (!(pro.location || "").toLowerCase().includes(opts.location.toLowerCase())) return false;
+      const servedCity = canonicalServiceArea(opts.location);
+      const declared = servedCity ? servesArea(pro, servedCity) : false;
+      const literal = sameCitySpellings(opts.location).some((spelling) =>
+        (pro.location || "").toLowerCase().includes(spelling.toLowerCase())
+      );
+      if (!declared && !literal) return false;
     }
 
     if (opts.pincode) {
@@ -267,6 +304,24 @@ function fallbackList(seed, locations, opts, sortBy, page, pageSize, near = null
 }
 
 // ponytail: mock seed fallback until supabase/schema.sql is applied and approved pros exist.
+// Reviewed pincode area centroids for the near-me fallback chain. Returns null
+// when the lookup table is absent or errors, so callers fall back to the city
+// centroid or "distance unknown" exactly as before.
+async function fetchPincodeCentroids(supabase, rows) {
+  const pincodes = [...new Set(rows.map((r) => r.pincode).filter(Boolean))];
+  if (!pincodes.length) return null;
+  try {
+    const { data, error } = await supabase
+      .from("pincodes_lookup")
+      .select("pincode, latitude, longitude")
+      .in("pincode", pincodes);
+    if (error || !data) return null;
+    return new Map(data.map((r) => [r.pincode, r]));
+  } catch {
+    return null;
+  }
+}
+
 // Remove the seed fallback once the professionals table is populated in every environment.
 export async function queryProfessionals(supabase, options = {}) {
   const {
@@ -318,8 +373,9 @@ export async function queryProfessionals(supabase, options = {}) {
       if (!nearbyError && nearby && nearby.length > 0) {
         const locs = locations || (await listLocations());
         const locMap = buildLocationMap(locs);
+        const pinMap = await fetchPincodeCentroids(supabase, nearby);
         const rows = nearby
-          .map((row) => mapProfessional(row, locMap))
+          .map((row) => mapProfessional(row, locMap, pinMap))
           .sort(byDistanceFrom(near));
         const start = (safePage - 1) * safeSize;
         return {
@@ -332,7 +388,20 @@ export async function queryProfessionals(supabase, options = {}) {
       }
     } else {
       const from = (safePage - 1) * safeSize;
-      const { data, error, count } = await query.range(from, from + safeSize - 1);
+      let { data, error, count } = await query.range(from, from + safeSize - 1);
+
+      if (error && String(error.message || "").includes("service_areas")) {
+        // The database predates the professionals.service_areas column: retry
+        // with the plain literal city filter so the directory keeps working
+        // until the additive schema change is applied.
+        let retry = supabase
+          .from("professionals")
+          .select("*, services(*), credentials(*), reviews(*)", { count: "exact" })
+          .eq("is_active", true);
+        retry = applyFilters(retry, { ...opts, skipServiceAreas: true });
+        retry = applySort(retry, sortBy);
+        ({ data, error, count } = await retry.range(from, from + safeSize - 1));
+      }
 
       if (error) throw error;
 
@@ -380,6 +449,47 @@ export async function queryProfessionals(supabase, options = {}) {
   }
 
   return fallbackList(seed, locations, opts, sortBy, safePage, safeSize, near);
+}
+
+// Single-profile read for /professionals/[id]: the shared catalog (500-row cap,
+// multi-table join) can lag or fail while the profile exists, so the detail page
+// confirms a catalog miss with one bounded by-id query before saying "not found".
+// Status contract: only the admin-backed API read (which bypasses RLS) may call a
+// profile "missing". Network/server failures and the RLS-limited anon fallback
+// return "unknown" — a failed read is never evidence of absence.
+// Uses the same is_active=true predicate and mapped shape as the public directory.
+export async function getProfessionalById(id, { fetcher = fetch } = {}) {
+  if (!id) return { status: "missing", pro: null };
+  try {
+    const res = await fetcher(`/api/professionals?id=${encodeURIComponent(id)}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.rows)) {
+        return data.rows[0]
+          ? { status: "found", pro: data.rows[0] }
+          : { status: "missing", pro: null };
+      }
+      return { status: "unknown", pro: null }; // malformed success body
+    }
+    // Non-OK API response: fall through to the anon client query below.
+  } catch {
+    // Network failure: fall through to the anon client query below.
+  }
+  if (typeof window === "undefined") return { status: "unknown", pro: null };
+  try {
+    const supabase = createClient();
+    const { data, error } = await supabase
+      .from("professionals")
+      .select("*, services(*), credentials(*), reviews(*)")
+      .eq("id", id)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (error || !data) return { status: "unknown", pro: null }; // RLS/empty anon reads cannot confirm absence
+    const locs = await listLocations();
+    return { status: "found", pro: mapProfessional(data, buildLocationMap(locs)) };
+  } catch {
+    return { status: "unknown", pro: null };
+  }
 }
 
 // ponytail: in browser, fetches through /api/professionals so admin service role can bypass RLS
