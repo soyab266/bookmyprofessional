@@ -23,6 +23,7 @@ function mockSupabase(initialRows = [], profiles = 'auto') {
       filters.every((f) => {
         if (f.op === 'eq') return row[f.col] === f.val;
         if (f.op === 'in') return f.val.includes(row[f.col]);
+        if (f.op === 'lt') return String(row[f.col] || '') < String(f.val);
         return true;
       })
     );
@@ -44,6 +45,10 @@ function mockSupabase(initialRows = [], profiles = 'auto') {
         },
         in(col, val) {
           filters.push({ op: 'in', col, val });
+          return builder;
+        },
+        lt(col, val) {
+          filters.push({ op: 'lt', col, val });
           return builder;
         },
         order() {
@@ -159,14 +164,14 @@ test('queueRegistrationWelcome refuses missing profile id or supabase', async ()
   assert.deepEqual(await queueRegistrationWelcome(null, CUSTOMER), { queued: false, reason: 'no_supabase' });
 });
 
-test('queueRegistrationWelcome dedupes against pending and sent rows', async () => {
+test('queueRegistrationWelcome dedupes against pending and accepted rows', async () => {
   const pending = [{ user_id: 'u-customer', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending' }];
   let sb = mockSupabase(pending);
   let result = await queueRegistrationWelcome(sb, CUSTOMER);
   assert.equal(result.queued, false);
   assert.equal(result.reason, 'already_queued_or_sent');
 
-  const sent = [{ user_id: 'u-customer', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'sent' }];
+  const sent = [{ user_id: 'u-customer', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'accepted' }];
   sb = mockSupabase(sent);
   result = await queueRegistrationWelcome(sb, CUSTOMER);
   assert.equal(result.queued, false);
@@ -180,7 +185,7 @@ test('queueRegistrationWelcome dedupes against pending and sent rows', async () 
 });
 
 test('queueRegistrationWelcome dedupes per template, not per user', async () => {
-  const other = [{ user_id: 'u-customer', template: META_TEMPLATE.PRO_REGISTRATION, status: 'sent' }];
+  const other = [{ user_id: 'u-customer', template: META_TEMPLATE.PRO_REGISTRATION, status: 'accepted' }];
   const sb = mockSupabase(other);
   const result = await queueRegistrationWelcome(sb, CUSTOMER);
   assert.equal(result.queued, true);
@@ -189,7 +194,7 @@ test('queueRegistrationWelcome dedupes per template, not per user', async () => 
 test('listPendingOutbox returns pending rows only', async () => {
   const sb = mockSupabase([
     { id: 'a', user_id: 'u1', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload: {} },
-    { id: 'b', user_id: 'u2', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'sent', payload: {} },
+    { id: 'b', user_id: 'u2', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'accepted', payload: {} },
   ]);
   const pending = await listPendingOutbox(sb);
   assert.equal(pending.length, 1);
@@ -200,30 +205,30 @@ test('listPendingOutbox returns [] without supabase', async () => {
   assert.deepEqual(await listPendingOutbox(null), []);
 });
 
-test('dispatchRegistrationWelcomeOutbox sends pending rows and marks them sent', async () => {
+test('dispatchRegistrationWelcomeOutbox sends pending rows and marks them accepted (acceptance, not delivery)', async () => {
   const payload = { messaging_product: 'whatsapp', type: 'template', to: '919970897799', template: { name: META_TEMPLATE.CUSTOMER_REGISTRATION, language: { code: 'en' }, components: [{ type: 'body', parameters: [{ type: 'text', text: 'Soyab' }] }] } };
   const sb = mockSupabase([{ id: 'a', user_id: 'u1', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload }]);
   const sentPayloads = [];
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async (p) => { sentPayloads.push(p); return { success: true }; },
   });
-  assert.deepEqual(summary, { sent: 1, failed: 0, skipped: 0 });
+  assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0 });
   assert.equal(sentPayloads.length, 1);
   const row = sb.rows.find((r) => r.id === 'a');
-  assert.equal(row.status, 'sent');
+  assert.equal(row.status, 'accepted');
   assert.equal(row.attempts, 1);
-  assert.ok(row.sent_at);
+  assert.ok(row.accepted_at);
 });
 
-test('dispatchRegistrationWelcomeOutbox records failures and keeps row pending', async () => {
+test('dispatchRegistrationWelcomeOutbox holds ambiguous send failures as uncertain (never auto-resent)', async () => {
   const payload = { messaging_product: 'whatsapp', type: 'template', to: '919970897799', template: { name: META_TEMPLATE.CUSTOMER_REGISTRATION, language: { code: 'en' }, components: [{ type: 'body', parameters: [{ type: 'text', text: 'Soyab' }] }] } };
   const sb = mockSupabase([{ id: 'a', user_id: 'u1', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload }]);
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => ({ success: false, error: 'api_error' }),
   });
-  assert.deepEqual(summary, { sent: 0, failed: 0, skipped: 1 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 1 });
   const row = sb.rows.find((r) => r.id === 'a');
-  assert.equal(row.status, 'pending');
+  assert.equal(row.status, 'uncertain'); // attempted, acceptance unknown: held for reconciliation
   assert.equal(row.attempts, 1);
   assert.equal(row.last_error, 'api_error');
 });
@@ -237,7 +242,7 @@ test('dispatchRegistrationWelcomeOutbox marks max-attempt rows as failed without
     sendImpl: async () => { sendCalls++; return { success: true }; },
     maxAttempts: 5,
   });
-  assert.deepEqual(summary, { sent: 0, failed: 1, skipped: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 1, skipped: 0, uncertain: 0 });
   assert.equal(sendCalls, 0);
   assert.equal(sb.rows.find((r) => r.id === 'a').status, 'failed');
   assert.equal(sb.rows.find((r) => r.id === 'a').last_error, 'max_attempts_reached');
@@ -248,7 +253,7 @@ test('dispatchRegistrationWelcomeOutbox never marks a simulated send as sent', a
   const sb = mockSupabase([{ id: 'a', user_id: 'u1', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload }]);
   // default sender = real connector, which simulates under NODE_ENV=test
   const summary = await dispatchRegistrationWelcomeOutbox(sb);
-  assert.deepEqual(summary, { sent: 0, failed: 0, skipped: 1 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'pending');
   assert.equal(row.attempts, 0); // a simulated attempt is not burned
@@ -261,7 +266,7 @@ test('dispatchRegistrationWelcomeOutbox counts a missing-credentials skip withou
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => ({ success: false, skipped: 'missing_credentials' }),
   });
-  assert.deepEqual(summary, { sent: 0, failed: 0, skipped: 1 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'pending');
   assert.equal(row.last_error, 'missing_credentials');
@@ -290,9 +295,10 @@ test('dispatchRegistrationWelcomeOutbox reports a queue read failure instead of 
     failingReadSupabase('connection refused'),
     { sendImpl: async () => { sends++; return { success: true }; } }
   );
-  assert.equal(summary.sent, 0);
+  assert.equal(summary.accepted, 0);
   assert.equal(summary.failed, 0);
   assert.equal(summary.skipped, 0);
+  assert.equal(summary.uncertain, 0);
   assert.match(summary.error, /queue_read_failed: connection refused/);
   assert.equal(sends, 0); // nothing was attempted against a broken queue
 });
@@ -305,7 +311,7 @@ test('dispatchRegistrationWelcomeOutbox without supabase reports an error, not z
 test('dispatchRegistrationWelcomeOutbox on a genuinely empty queue returns zeros with no error', async () => {
   const sb = mockSupabase([]);
   const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => ({ success: true }) });
-  assert.deepEqual(summary, { sent: 0, failed: 0, skipped: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
   assert.equal('error' in summary, false);
 });
 
@@ -322,7 +328,7 @@ test('dispatch skips and never sends when consent was withdrawn while queued', a
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => { sends++; return { success: true }; },
   });
-  assert.deepEqual(summary, { sent: 0, failed: 0, skipped: 1 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
   assert.equal(sends, 0);
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'skipped');
@@ -375,4 +381,72 @@ test('dispatch keeps rows pending without sending when consent cannot be read', 
   assert.equal(row.status, 'pending'); // transient: retry later
   assert.equal(row.attempts, 0); // no attempt burned
   assert.equal(row.last_error, 'consent_check_failed');
+});
+
+test('dispatch claims rows so a concurrent dispatcher never double-sends', async () => {
+  const sb = mockSupabase([
+    { id: 'r-race', user_id: 'u-customer', template: 'bmp_customer_registration_received', payload: DISPATCH_PAYLOAD, status: 'pending' },
+  ]);
+  let sends = 0;
+  let started;
+  const startedPromise = new Promise((res) => { started = res; });
+  let release;
+  const gate = new Promise((res) => { release = res; });
+  const blockingSend = async () => { sends++; started(); await gate; return { success: true }; };
+
+  const runA = dispatchRegistrationWelcomeOutbox(sb, { sendImpl: blockingSend });
+  await startedPromise; // A has claimed the row and is inside the send
+  const summaryB = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
+  assert.deepEqual(summaryB, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 }, 'concurrent run sees no claimable rows');
+  release();
+  const summaryA = await runA;
+  assert.deepEqual(summaryA, { accepted: 1, failed: 0, skipped: 0, uncertain: 0 });
+  assert.equal(sends, 1, 'exactly one send happened for one queued row');
+  assert.equal(sb.rows.find((r) => r.id === 'r-race').status, 'accepted');
+});
+
+test('dispatch HOLDS orphaned sending claims older than 10 minutes (crashed worker may have delivered)', async () => {
+  const sb = mockSupabase([
+    { id: 'r-stale', user_id: 'u-customer', template: 'bmp_customer_registration_received', payload: DISPATCH_PAYLOAD, status: 'sending', updated_at: new Date(Date.now() - 60 * 60 * 1000).toISOString() },
+  ]);
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
+  assert.equal(sends, 0, 'a stale claim is never automatically resent');
+  const row = sb.rows.find((r) => r.id === 'r-stale');
+  assert.equal(row.status, 'uncertain');
+  assert.equal(row.last_error, 'stale_claim_uncertain');
+});
+
+test('dispatch leaves fresh sending claims untouched', async () => {
+  const sb = mockSupabase([
+    { id: 'r-live', user_id: 'u-customer', template: 'bmp_customer_registration_received', payload: DISPATCH_PAYLOAD, status: 'sending', updated_at: new Date().toISOString() },
+  ]);
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
+  assert.equal(sends, 0);
+  assert.equal(sb.rows.find((r) => r.id === 'r-live').status, 'sending');
+});
+
+test('accepted send with failed status persistence never returns the row to pending', async () => {
+  const sb = mockSupabase([
+    { id: 'a', user_id: 'u1', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload: DISPATCH_PAYLOAD },
+  ]);
+  const origFrom = sb.from.bind(sb);
+  sb.from = (table) => {
+    const builder = origFrom(table);
+    if (table === OUTBOX_TABLE) {
+      const origUpdate = builder.update.bind(builder);
+      builder.update = (fields) => {
+        if (fields && fields.status === 'accepted') throw new Error('persistence lost');
+        return origUpdate(fields);
+      };
+    }
+    return builder;
+  };
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => ({ success: true }) });
+  assert.equal(summary.accepted, 1, 'Meta accepted the message');
+  const row = sb.rows.find((r) => r.id === 'a');
+  assert.equal(row.status, 'sending', 'row stays claimed; the stale sweep later holds it as uncertain - it can never return to pending and be resent automatically');
 });
