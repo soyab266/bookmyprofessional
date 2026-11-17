@@ -155,10 +155,54 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
   let failed = 0;
   let skipped = 0;
 
+  // Fresh consent check at dispatch: queue-time consent is not enough - a
+  // user who opted out (or whose phone/consent changed) while queued must not
+  // be sent to. When current consent cannot be established, the safe behavior
+  // is NO SEND.
+  const userIds = [...new Set(rows.map((r) => r.user_id).filter(Boolean))];
+  let profilesById = new Map();
+  let consentReadFailed = false;
+  if (userIds.length) {
+    try {
+      const { data: profs, error: profErr } = await supabase
+        .from('profiles')
+        .select('id, full_name, phone, whatsapp_consent, notification_prefs')
+        .in('id', userIds);
+      if (profErr) {
+        consentReadFailed = true;
+      } else {
+        profilesById = new Map((profs || []).map((p) => [p.id, p]));
+      }
+    } catch {
+      consentReadFailed = true;
+    }
+  }
+
   for (const row of rows) {
     if ((row.attempts ?? 0) >= maxAttempts) {
       await updateOutbox(supabase, row.id, { status: 'failed', last_error: 'max_attempts_reached' });
       failed++;
+      continue;
+    }
+
+    if (consentReadFailed) {
+      // Consent could not be checked (transient read failure): keep the row
+      // pending without burning an attempt, and do not send.
+      await updateOutbox(supabase, row.id, { last_error: 'consent_check_failed' });
+      skipped++;
+      continue;
+    }
+    const profile = profilesById.get(row.user_id);
+    if (!profile) {
+      // The profile is gone: no consent can be established - terminal no-send.
+      await updateOutbox(supabase, row.id, { status: 'skipped', last_error: 'profile_unavailable' });
+      skipped++;
+      continue;
+    }
+    if (!hasWhatsAppConsent(profile)) {
+      // Consent withdrawn (or phone removed) after queueing - terminal no-send.
+      await updateOutbox(supabase, row.id, { status: 'skipped', last_error: 'consent_withdrawn' });
+      skipped++;
       continue;
     }
 
