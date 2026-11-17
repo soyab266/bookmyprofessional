@@ -77,6 +77,28 @@ export async function sendMetaTemplateMessage(payload, { fetchImpl } = {}) {
 }
 
 /**
+ * Classify a send outcome for duplicate-safe handling.
+ * - delivered: Meta accepted the message (success response).
+ * - simulated: nothing was sent by design; never counted as delivery.
+ * - not_attempted: the request never left this process (validation failure,
+ *   missing credentials). Meta provably never saw it, so a later retry is
+ *   safe. Validation failures are still pointless to retry (permanent bug).
+ * - uncertain: the request WAS attempted. An answered 4xx/429/5xx does not
+ *   prove non-acceptance (Meta may queue a message and then fail the
+ *   response), and a no-response network error is inherently ambiguous.
+ *   Uncertain outcomes are HELD for reconciliation, never automatically
+ *   resent - automatic resend here is a duplicate loop.
+ */
+export function classifySendOutcome(result) {
+  if (!result) return 'uncertain';
+  if (result.success) return 'delivered';
+  if (result.simulated) return 'simulated';
+  if (result.skipped) return 'not_attempted';
+  if (String(result.error || '').startsWith('validation_failed')) return 'not_attempted';
+  return 'uncertain';
+}
+
+/**
  * Fetch profiles helper (mirrors whatsapp.js, kept local so this module can
  * run standalone).
  */
@@ -97,18 +119,20 @@ async function getProfiles(supabase, ids) {
 
 /**
  * Send a template message to one profile, honouring consent.
- * @returns {Promise<{sent: boolean, reason?: string, result?: object}>}
+ * @returns {Promise<{accepted: boolean, reason?: string, result?: object}>}
  */
 async function sendToProfile(profile, buildPayload, deps) {
   if (!hasWhatsAppConsent(profile)) {
-    return { sent: false, reason: 'no_consent_or_phone' };
+    return { accepted: false, reason: 'no_consent_or_phone' };
   }
   const payload = buildPayload(profile);
   if (!payload) {
-    return { sent: false, reason: 'payload_build_failed' };
+    return { accepted: false, reason: 'payload_build_failed' };
   }
+  // Single attempt: ambiguous outcomes are held for reconciliation by the
+  // caller (outbox 'uncertain' status), never resent automatically.
   const result = await sendMetaTemplateMessage(payload, deps);
-  return { sent: result.success === true, result };
+  return { accepted: result.success === true, result, payload };
 }
 
 /**
@@ -126,10 +150,10 @@ export async function notifyBookingConfirmedMeta(booking, supabase, deps) {
     const [customerResult, proResult] = await Promise.all([
       customer
         ? sendToProfile(customer, (p) => buildCustomerBookingReceived({ to: p.phone, customerName: p.full_name, booking }), deps)
-        : { sent: false, reason: 'profile_not_found' },
+        : { accepted: false, reason: 'profile_not_found' },
       pro
         ? sendToProfile(pro, (p) => buildProfessionalBookingRequest({ to: p.phone, professionalName: p.full_name, booking }), deps)
-        : { sent: false, reason: 'profile_not_found' },
+        : { accepted: false, reason: 'profile_not_found' },
     ]);
 
     return { customer: customerResult, professional: proResult };
