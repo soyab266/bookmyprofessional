@@ -1,9 +1,51 @@
 import { sendUserEmail } from './email.js';
 import { notifyBookingConfirmed } from './whatsapp.js';
+import { notifyBookingConfirmedMeta, classifySendOutcome } from './meta-whatsapp.js';
 import { formatMoney } from './money.js';
+
+// Booking WhatsApp provider: the existing Brevo path stays active until the
+// Meta Cloud API path is explicitly enabled via
+// META_WHATSAPP_BOOKINGS_ENABLED=true. Any other value (or none) keeps Brevo.
+export function bookingWhatsAppProvider(env = process.env) {
+  return env.META_WHATSAPP_BOOKINGS_ENABLED === 'true' ? 'meta' : 'brevo';
+}
 
 // Process-level idempotency tracker to guarantee single delivery across concurrent requests
 const recentlyNotifiedBookings = new Set();
+
+/**
+ * Enqueue genuinely failed Meta booking sends for later dispatcher retry.
+ */
+async function enqueueFailedBookingSends(supabase, booking, metaResult) {
+  if (!supabase || typeof supabase.from !== 'function') return;
+  const parties = [
+    [booking.customer_id, metaResult?.customer],
+    [booking.professional_id, metaResult?.professional],
+  ];
+  for (const [userId, r] of parties) {
+    if (!userId || !r || r.accepted || !r.payload || !r.result) continue;
+    const outcome = classifySendOutcome(r.result);
+    if (outcome === 'delivered' || outcome === 'simulated') continue;
+    const err = String(r.result.error || r.result.skipped || 'unknown_error');
+    if (err.startsWith('validation_failed')) continue; // permanent payload bug
+    // 'uncertain' = attempted, acceptance unknown: held, never auto-resent.
+    // 'not_attempted' = never reached Meta: safe for later automatic retry.
+    const status = outcome === 'not_attempted' ? 'pending' : 'uncertain';
+    try {
+      await supabase.from('notification_outbox').insert({
+        user_id: userId,
+        channel: 'whatsapp',
+        template: r.payload?.template?.name || 'unknown',
+        payload: r.payload,
+        status,
+        last_error: err,
+      });
+      console.warn(`[Notifications] recorded failed booking WhatsApp send as ${status} (booking ${booking.id}, user ${userId})`);
+    } catch (e) {
+      console.error('[Notifications] failed to record booking WhatsApp send failure:', e?.message || e);
+    }
+  }
+}
 
 /**
  * Notify customer and professional that a booking has been confirmed and paid.
@@ -12,7 +54,7 @@ const recentlyNotifiedBookings = new Set();
  * @param {object} booking  - Full booking row from Supabase
  * @param {object} supabase - Supabase service-role client
  */
-export async function dispatchBookingConfirmedNotifications(booking, supabase) {
+export async function dispatchBookingConfirmedNotifications(booking, supabase, deps) {
   if (!booking?.id) return { success: false, reason: 'missing_booking_id' };
 
   // 1. In-memory deduplication check
@@ -135,10 +177,33 @@ export async function dispatchBookingConfirmedNotifications(booking, supabase) {
       );
     }
 
-    // 5. WhatsApp Notifications (to Customer and Professional)
-    tasks.push(notifyBookingConfirmed(booking, supabase));
+    // 5. WhatsApp Notifications (to Customer and Professional): Meta Cloud API
+    // only when explicitly enabled; otherwise the existing Brevo provider.
+    const useMeta = bookingWhatsAppProvider() === 'meta';
+    tasks.push(
+      useMeta
+        ? notifyBookingConfirmedMeta(booking, supabase, deps)
+        : notifyBookingConfirmed(booking, supabase)
+    );
 
-    await Promise.allSettled(tasks);
+    const settled = await Promise.allSettled(tasks);
+
+    // Held recovery: a Meta booking send whose outcome is UNCERTAIN (the
+    // request was attempted but acceptance is unknown) is recorded in the
+    // notification outbox with status 'uncertain' - held for reconciliation,
+    // never automatically resent (automatic resend of an ambiguous outcome is
+    // a duplicate loop). A send that provably never reached Meta
+    // (missing credentials) is enqueued 'pending' for safe later retry.
+    // Validation failures are permanent (payload bug) and never queued;
+    // consent / missing-profile cases carry no payload; simulated results are
+    // untouched. No at-least-once / exactly-once claim.
+    if (useMeta) {
+      const metaSettled = settled[settled.length - 1];
+      if (metaSettled?.status === 'fulfilled' && metaSettled.value) {
+        await enqueueFailedBookingSends(supabase, booking, metaSettled.value);
+      }
+    }
+
     return { success: true };
   } catch (err) {
     console.error('[Notifications] dispatchBookingConfirmedNotifications error:', err?.message || err);
