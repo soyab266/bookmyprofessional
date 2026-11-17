@@ -1,6 +1,14 @@
 import { sendUserEmail } from './email.js';
+import { notifyBookingConfirmed } from './whatsapp.js';
 import { notifyBookingConfirmedMeta } from './meta-whatsapp.js';
 import { formatMoney } from './money.js';
+
+// Booking WhatsApp provider: the existing Brevo path stays active until the
+// Meta Cloud API path is explicitly enabled via
+// META_WHATSAPP_BOOKINGS_ENABLED=true. Any other value (or none) keeps Brevo.
+export function bookingWhatsAppProvider(env = process.env) {
+  return env.META_WHATSAPP_BOOKINGS_ENABLED === 'true' ? 'meta' : 'brevo';
+}
 
 // Process-level idempotency tracker to guarantee single delivery across concurrent requests
 const recentlyNotifiedBookings = new Set();
@@ -135,8 +143,13 @@ export async function dispatchBookingConfirmedNotifications(booking, supabase) {
       );
     }
 
-    // 5. WhatsApp Notifications (to Customer and Professional) via Meta Cloud API
-    tasks.push(notifyBookingConfirmedMeta(booking, supabase));
+    // 5. WhatsApp Notifications (to Customer and Professional): Meta Cloud API
+    // only when explicitly enabled; otherwise the existing Brevo provider.
+    tasks.push(
+      bookingWhatsAppProvider() === 'meta'
+        ? notifyBookingConfirmedMeta(booking, supabase)
+        : notifyBookingConfirmed(booking, supabase)
+    );
 
     await Promise.allSettled(tasks);
     return { success: true };
