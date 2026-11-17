@@ -12,7 +12,9 @@ import {
 import { META_TEMPLATE } from '../src/lib/meta-whatsapp-templates.js';
 
 // In-memory mock of the supabase query builder covering the outbox flows.
-function mockSupabase(initialRows = []) {
+// profiles option: 'auto' (default: every requested id is consenting),
+// an array of profile rows, or { error: 'message' } for a failed read.
+function mockSupabase(initialRows = [], profiles = 'auto') {
   const rows = initialRows.map((r, i) => ({ id: r.id || `row-${i + 1}`, attempts: 0, ...r }));
   let inserted = 0;
 
@@ -29,7 +31,8 @@ function mockSupabase(initialRows = []) {
   const api = {
     rows,
     from(table) {
-      assert.equal(table, OUTBOX_TABLE);
+      assert.ok(table === OUTBOX_TABLE || table === 'profiles', `unexpected table ${table}`);
+      const isProfiles = table === 'profiles';
       const filters = [];
       const builder = {
         select() {
@@ -61,6 +64,15 @@ function mockSupabase(initialRows = []) {
           return builder;
         },
         then(resolve) {
+          // profiles read path (dispatch-time consent re-check)
+          if (isProfiles) {
+            if (profiles && profiles.error) return resolve({ data: null, error: { message: profiles.error } });
+            const ids = (filters.find((f) => f.col === 'id' && f.op === 'in') || { val: [] }).val;
+            const data = profiles === 'auto'
+              ? ids.map((id) => ({ id, full_name: 'Test', phone: '919970897799', whatsapp_consent: true }))
+              : (profiles || []).filter((p) => ids.includes(p.id));
+            return resolve({ data, error: null });
+          }
           // select path
           if (builder._update) {
             const targets = applyFilters(rows, filters);
@@ -295,4 +307,72 @@ test('dispatchRegistrationWelcomeOutbox on a genuinely empty queue returns zeros
   const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => ({ success: true }) });
   assert.deepEqual(summary, { sent: 0, failed: 0, skipped: 0 });
   assert.equal('error' in summary, false);
+});
+
+// --- Fresh consent check at dispatch (opt-out while queued must not send) ---
+
+const DISPATCH_PAYLOAD = { messaging_product: 'whatsapp', type: 'template', to: '919970897799', template: { name: META_TEMPLATE.CUSTOMER_REGISTRATION, language: { code: 'en' }, components: [{ type: 'body', parameters: [{ type: 'text', text: 'Soyab' }] }] } };
+
+test('dispatch skips and never sends when consent was withdrawn while queued', async () => {
+  const sb = mockSupabase(
+    [{ id: 'a', user_id: 'u1', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload: DISPATCH_PAYLOAD }],
+    [{ id: 'u1', full_name: 'Soyab', phone: '919970897799', whatsapp_consent: false }]
+  );
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => { sends++; return { success: true }; },
+  });
+  assert.deepEqual(summary, { sent: 0, failed: 0, skipped: 1 });
+  assert.equal(sends, 0);
+  const row = sb.rows.find((r) => r.id === 'a');
+  assert.equal(row.status, 'skipped');
+  assert.equal(row.last_error, 'consent_withdrawn');
+  assert.equal(row.attempts, 0);
+});
+
+test('dispatch respects a whatsapp opt-out in notification_prefs at send time', async () => {
+  const sb = mockSupabase(
+    [{ id: 'a', user_id: 'u1', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload: DISPATCH_PAYLOAD }],
+    [{ id: 'u1', full_name: 'Soyab', phone: '919970897799', whatsapp_consent: true, notification_prefs: { whatsapp: false } }]
+  );
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => { sends++; return { success: true }; },
+  });
+  assert.equal(sends, 0);
+  assert.equal(summary.skipped, 1);
+  assert.equal(sb.rows.find((r) => r.id === 'a').last_error, 'consent_withdrawn');
+});
+
+test('dispatch marks profile_unavailable as terminal no-send', async () => {
+  const sb = mockSupabase(
+    [{ id: 'a', user_id: 'u-gone', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload: DISPATCH_PAYLOAD }],
+    [] // profile no longer exists
+  );
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => { sends++; return { success: true }; },
+  });
+  assert.equal(sends, 0);
+  assert.equal(summary.skipped, 1);
+  const row = sb.rows.find((r) => r.id === 'a');
+  assert.equal(row.status, 'skipped');
+  assert.equal(row.last_error, 'profile_unavailable');
+});
+
+test('dispatch keeps rows pending without sending when consent cannot be read', async () => {
+  const sb = mockSupabase(
+    [{ id: 'a', user_id: 'u1', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload: DISPATCH_PAYLOAD }],
+    { error: 'profiles read failed' }
+  );
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => { sends++; return { success: true }; },
+  });
+  assert.equal(sends, 0);
+  assert.equal(summary.skipped, 1);
+  const row = sb.rows.find((r) => r.id === 'a');
+  assert.equal(row.status, 'pending'); // transient: retry later
+  assert.equal(row.attempts, 0); // no attempt burned
+  assert.equal(row.last_error, 'consent_check_failed');
 });
