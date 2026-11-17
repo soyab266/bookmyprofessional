@@ -2,8 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 process.env.NODE_ENV = 'test';
+// These wiring tests exercise the Meta path, which requires explicit activation.
+process.env.META_WHATSAPP_BOOKINGS_ENABLED = 'true';
 
-import { dispatchBookingConfirmedNotifications } from '../src/lib/booking-notifications.js';
+import { dispatchBookingConfirmedNotifications, bookingWhatsAppProvider } from '../src/lib/booking-notifications.js';
 
 // Recording supabase mock: the Meta connector is the only dispatch step that
 // queries the profiles table through the passed-in client, so these calls
@@ -91,4 +93,21 @@ test('booking confirmation works when the professional is not consenting', async
   // Dispatch succeeds overall; the connector internally skips the non-consenting pro.
   assert.equal(result.success, true);
   assert.ok(calls.find((c) => c.cols && c.cols.includes('whatsapp_consent')), 'profiles were still queried');
+});
+
+test('bookingWhatsAppProvider keeps the existing Brevo provider by default', () => {
+  assert.equal(bookingWhatsAppProvider({}), 'brevo');
+  assert.equal(bookingWhatsAppProvider({ META_WHATSAPP_BOOKINGS_ENABLED: 'false' }), 'brevo');
+  assert.equal(bookingWhatsAppProvider({ META_WHATSAPP_BOOKINGS_ENABLED: '1' }), 'brevo');
+});
+
+test('bookingWhatsAppProvider selects Meta only on exact explicit enablement', () => {
+  assert.equal(bookingWhatsAppProvider({ META_WHATSAPP_BOOKINGS_ENABLED: 'true' }), 'meta');
+});
+
+test('dispatch consults the provider gate (source-level)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../src/lib/booking-notifications.js', import.meta.url), 'utf8');
+  assert.match(src, /bookingWhatsAppProvider\(\) === 'meta'/);
+  assert.match(src, /notifyBookingConfirmed\(booking, supabase\)/, 'existing provider preserved as the default call');
 });
