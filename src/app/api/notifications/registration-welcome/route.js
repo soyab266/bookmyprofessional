@@ -14,7 +14,9 @@ import { dispatchRegistrationWelcomeOutbox } from '@/lib/registration-outbox';
 export async function POST(req) {
   const secret = process.env.INTERNAL_SECRET;
   const authHeader = req.headers.get('x-internal-secret');
-  if (secret && authHeader !== secret) {
+  // Fail closed: when INTERNAL_SECRET is not configured the route must deny,
+  // never allow - an unset secret must not turn the dispatcher public.
+  if (!secret || authHeader !== secret) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
