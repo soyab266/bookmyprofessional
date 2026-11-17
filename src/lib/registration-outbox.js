@@ -11,7 +11,7 @@ import {
   buildCustomerRegistrationReceived,
   buildProfessionalRegistrationReceived,
 } from './meta-whatsapp-templates.js';
-import { sendMetaTemplateMessage } from './meta-whatsapp.js';
+import { sendMetaTemplateMessage, classifySendOutcome } from './meta-whatsapp.js';
 
 export const OUTBOX_TABLE = 'notification_outbox';
 
@@ -56,7 +56,7 @@ export async function queueRegistrationWelcome(supabase, profile) {
       .select('id, status')
       .eq('user_id', profile.id)
       .eq('template', template)
-      .in('status', ['pending', 'sent']);
+      .in('status', ['pending', 'accepted']);
 
     if (readError) {
       return { queued: false, reason: `read_failed: ${readError.message}` };
@@ -115,6 +115,30 @@ async function updateOutbox(supabase, id, fields) {
   }
 }
 
+// Duplicate-send protection: a row is claimed atomically (pending -> sending)
+// before any send attempt. A second concurrent dispatcher processing the same
+// pending batch loses the claim (zero rows updated) and skips the row, so one
+// queued message can never be sent twice by overlapping runs.
+async function claimOutboxRow(supabase, id) {
+  try {
+    const { data, error } = await supabase
+      .from(OUTBOX_TABLE)
+      .update({ status: 'sending', updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .eq('status', 'pending')
+      .select('id');
+    if (error) return false;
+    return (data || []).length > 0;
+  } catch {
+    // Claim failure is safe: the row stays pending for a later run.
+    return false;
+  }
+}
+
+// Claims older than this are treated as orphaned (worker crashed mid-send)
+// and returned to pending at the start of the next dispatch.
+const STALE_CLAIM_MS = 10 * 60 * 1000;
+
 /**
  * Dispatch pending welcome messages through the Meta connector.
  *
@@ -123,7 +147,7 @@ async function updateOutbox(supabase, id, fields) {
  * @param {Function} [deps.sendImpl] - defaults to sendMetaTemplateMessage (tests inject)
  * @param {number}   [deps.limit]
  * @param {number}   [deps.maxAttempts] - rows at or above this count are marked failed
- * @returns {Promise<{sent: number, failed: number, skipped: number}>}
+ * @returns {Promise<{accepted: number, failed: number, skipped: number, uncertain: number}>}
  */
 export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, limit = 50, maxAttempts = 5 } = {}) {
   const send = sendImpl || sendMetaTemplateMessage;
@@ -133,8 +157,22 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
   // for callers that only need a best-effort list; the dispatcher must not -
   // a failed read that looks like "nothing to send" would hide an outage.)
   if (!supabase || typeof supabase.from !== 'function') {
-    return { sent: 0, failed: 0, skipped: 0, error: 'queue_read_failed: no_supabase' };
+    return { accepted: 0, failed: 0, skipped: 0, uncertain: 0, error: 'queue_read_failed: no_supabase' };
   }
+  // Orphaned claims (crashed/interrupted worker) are HELD for reconciliation,
+  // never automatically resent: the crashed worker may have delivered the
+  // message before dying, so resending would be a duplicate loop. A live
+  // worker's fresh claim is never touched.
+  try {
+    await supabase
+      .from(OUTBOX_TABLE)
+      .update({ status: 'uncertain', last_error: 'stale_claim_uncertain', updated_at: new Date().toISOString() })
+      .eq('status', 'sending')
+      .lt('updated_at', new Date(Date.now() - STALE_CLAIM_MS).toISOString());
+  } catch {
+    // best effort
+  }
+
   let rows;
   try {
     const { data, error: readError } = await supabase
@@ -144,16 +182,17 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
       .order('created_at', { ascending: true })
       .limit(limit);
     if (readError) {
-      return { sent: 0, failed: 0, skipped: 0, error: `queue_read_failed: ${readError.message || readError}` };
+      return { accepted: 0, failed: 0, skipped: 0, uncertain: 0, error: `queue_read_failed: ${readError.message || readError}` };
     }
     rows = data || [];
   } catch (err) {
-    return { sent: 0, failed: 0, skipped: 0, error: `queue_read_failed: ${err?.message || err}` };
+    return { accepted: 0, failed: 0, skipped: 0, uncertain: 0, error: `queue_read_failed: ${err?.message || err}` };
   }
 
-  let sent = 0;
+  let accepted = 0;
   let failed = 0;
   let skipped = 0;
+  let uncertain = 0;
 
   // Fresh consent check at dispatch: queue-time consent is not enough - a
   // user who opted out (or whose phone/consent changed) while queued must not
@@ -206,29 +245,65 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
       continue;
     }
 
+    // Atomically claim the row before sending: if another dispatcher claimed
+    // it first (or the claim write failed), skip - never double-send.
+    const claimed = await claimOutboxRow(supabase, row.id);
+    if (!claimed) {
+      skipped++;
+      continue;
+    }
+
     const result = await send(row.payload);
     if (result?.simulated) {
       // A simulated send is not a delivery: never mark the row sent and never
-      // burn an attempt. This keeps test/simulate modes from masking real
-      // sends in production.
-      await updateOutbox(supabase, row.id, { last_error: 'simulated_not_sent' });
+      // burn an attempt. Release the claim back to pending.
+      await updateOutbox(supabase, row.id, { status: 'pending', last_error: 'simulated_not_sent' });
       skipped++;
     } else if (result?.success) {
+      // Meta ACCEPTED the message (wamid returned). Acceptance is not
+      // delivery: without status webhooks we never learn the final
+      // disposition, so the terminal state is 'accepted', not 'delivered'.
+      // If this persistence write fails, the row stays 'sending' and the
+      // stale-claim sweep later holds it as 'uncertain' - it can never
+      // return to pending and be resent automatically.
       await updateOutbox(supabase, row.id, {
-        status: 'sent',
+        status: 'accepted',
         attempts: (row.attempts ?? 0) + 1,
-        sent_at: new Date().toISOString(),
+        accepted_at: new Date().toISOString(),
         last_error: null,
       });
-      sent++;
+      accepted++;
     } else {
-      await updateOutbox(supabase, row.id, {
-        attempts: (row.attempts ?? 0) + 1,
-        last_error: result?.error || result?.skipped || 'unknown_error',
-      });
-      skipped++;
+      const outcome = classifySendOutcome(result);
+      const err = result?.error || result?.skipped || 'unknown_error';
+      if (outcome === 'not_attempted' && !String(err).startsWith('validation_failed')) {
+        // Never reached Meta (e.g. missing credentials): safe to retry later.
+        await updateOutbox(supabase, row.id, {
+          status: 'pending',
+          attempts: (row.attempts ?? 0) + 1,
+          last_error: err,
+        });
+        skipped++;
+      } else if (outcome === 'not_attempted') {
+        // Validation failure: permanent payload bug, retrying never helps.
+        await updateOutbox(supabase, row.id, {
+          status: 'failed',
+          attempts: (row.attempts ?? 0) + 1,
+          last_error: err,
+        });
+        failed++;
+      } else {
+        // Uncertain: the message may have been accepted. HOLD for
+        // reconciliation; never auto-resend (duplicate loop).
+        await updateOutbox(supabase, row.id, {
+          status: 'uncertain',
+          attempts: (row.attempts ?? 0) + 1,
+          last_error: err,
+        });
+        uncertain++;
+      }
     }
   }
 
-  return { sent, failed, skipped };
+  return { accepted, failed, skipped, uncertain };
 }
