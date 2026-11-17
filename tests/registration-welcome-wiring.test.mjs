@@ -134,6 +134,14 @@ test('dispatcher route is secret-gated like the reminder route', () => {
   assert.match(routeSrc, /401/);
 });
 
+test('dispatcher route fails CLOSED when INTERNAL_SECRET is not configured', () => {
+  // The guard must deny when the secret is unset, never allow: the condition
+  // must be "deny if no secret OR header mismatch", not the old fail-open
+  // "deny only if a secret exists and mismatches".
+  assert.match(routeSrc, /if \(!secret \|\| authHeader !== secret\)/);
+  assert.doesNotMatch(routeSrc, /if \(secret && authHeader !== secret\)/);
+});
+
 test('dispatcher route uses the service role and the reviewed dispatcher', () => {
   assert.match(routeSrc, /SUPABASE_SERVICE_ROLE_KEY/);
   assert.match(routeSrc, /dispatchRegistrationWelcomeOutbox/);
