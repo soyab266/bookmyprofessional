@@ -137,34 +137,34 @@ test('sendMetaTemplateMessage reports a network failure without throwing', async
 
 test('notifyBookingConfirmedMeta sends to both consenting parties', async () => {
   const result = await notifyBookingConfirmedMeta(BOOKING, mockSupabase([CUSTOMER, PRO]));
-  assert.equal(result.customer.sent, true);
+  assert.equal(result.customer.accepted, true);
   assert.equal(result.customer.result.simulated, true);
-  assert.equal(result.professional.sent, true);
+  assert.equal(result.professional.accepted, true);
 });
 
 test('notifyBookingConfirmedMeta skips a party without consent', async () => {
   const noConsent = { ...CUSTOMER, whatsapp_consent: false };
   const result = await notifyBookingConfirmedMeta(BOOKING, mockSupabase([noConsent, PRO]));
-  assert.deepEqual(result.customer, { sent: false, reason: 'no_consent_or_phone' });
-  assert.equal(result.professional.sent, true);
+  assert.deepEqual(result.customer, { accepted: false, reason: 'no_consent_or_phone' });
+  assert.equal(result.professional.accepted, true);
 });
 
 test('notifyBookingConfirmedMeta skips a party without a phone number', async () => {
   const noPhone = { ...CUSTOMER, phone: '' };
   const result = await notifyBookingConfirmedMeta(BOOKING, mockSupabase([noPhone, PRO]));
-  assert.deepEqual(result.customer, { sent: false, reason: 'no_consent_or_phone' });
+  assert.deepEqual(result.customer, { accepted: false, reason: 'no_consent_or_phone' });
 });
 
 test('notifyBookingConfirmedMeta reports a missing profile', async () => {
   const result = await notifyBookingConfirmedMeta(BOOKING, mockSupabase([PRO]));
-  assert.deepEqual(result.customer, { sent: false, reason: 'profile_not_found' });
-  assert.equal(result.professional.sent, true);
+  assert.deepEqual(result.customer, { accepted: false, reason: 'profile_not_found' });
+  assert.equal(result.professional.accepted, true);
 });
 
 test('notifyBookingConfirmedMeta tolerates a broken supabase client', async () => {
   const result = await notifyBookingConfirmedMeta(BOOKING, { from: () => null });
-  assert.deepEqual(result.customer, { sent: false, reason: 'profile_not_found' });
-  assert.deepEqual(result.professional, { sent: false, reason: 'profile_not_found' });
+  assert.deepEqual(result.customer, { accepted: false, reason: 'profile_not_found' });
+  assert.deepEqual(result.professional, { accepted: false, reason: 'profile_not_found' });
 });
 
 test('notifyBookingConfirmedMeta handles null inputs', async () => {
@@ -174,16 +174,80 @@ test('notifyBookingConfirmedMeta handles null inputs', async () => {
 
 test('sendRegistrationWelcomeMeta picks the customer template', async () => {
   const result = await sendRegistrationWelcomeMeta({ ...CUSTOMER, role: 'customer' });
-  assert.equal(result.sent, true);
+  assert.equal(result.accepted, true);
   assert.equal(result.result.simulated, true);
 });
 
 test('sendRegistrationWelcomeMeta picks the professional template', async () => {
   const result = await sendRegistrationWelcomeMeta({ ...PRO, role: 'professional' });
-  assert.equal(result.sent, true);
+  assert.equal(result.accepted, true);
 });
 
 test('sendRegistrationWelcomeMeta requires consent', async () => {
   const result = await sendRegistrationWelcomeMeta({ ...CUSTOMER, role: 'customer', whatsapp_consent: false });
-  assert.deepEqual(result, { sent: false, reason: 'no_consent_or_phone' });
+  assert.deepEqual(result, { accepted: false, reason: 'no_consent_or_phone' });
+});
+
+test('notifyBookingConfirmedMeta does not retry an answered 5xx (acceptance uncertain)', async () => {
+  const savedEnv = { ...process.env };
+  let calls = 0;
+  const fetchMock = async () => {
+    calls++;
+    return { ok: false, status: 500, text: async () => 'server error' };
+  };
+  try {
+    delete process.env.NODE_ENV;
+    delete process.env.META_WHATSAPP_SIMULATE;
+    process.env.META_WHATSAPP_ACCESS_TOKEN = 'test-token';
+    process.env.META_WHATSAPP_PHONE_NUMBER_ID = '1448961308297408';
+    const profile = { id: 'cust-1', full_name: 'Soyab', phone: '9970897799', whatsapp_consent: true };
+    const sb = { from: () => ({ select: () => ({ in: async () => ({ data: [profile] }) }) }) };
+    const booking = { id: 'BMP-RETRY-1', customer_id: 'cust-1', professional_id: 'pro-none', service_title: 'Home Cleaning', total_paid: 999, date: '2026-11-21', time_slot: '3 PM', address: 'Flat 1, Mumbai' };
+    const result = await notifyBookingConfirmedMeta(booking, sb, { fetchImpl: fetchMock });
+    assert.equal(result.customer.accepted, false);
+    assert.equal(calls, 1, 'Meta answered 5xx: acceptance is uncertain, so no automatic resend - the caller holds it for reconciliation');
+  } finally {
+    process.env = savedEnv;
+  }
+});
+
+test('notifyBookingConfirmedMeta does not retry permanent failures', async () => {
+  const savedEnv = { ...process.env };
+  let calls = 0;
+  const fetchMock = async () => { calls++; return { ok: false, status: 400, text: async () => 'bad request' }; };
+  try {
+    delete process.env.NODE_ENV;
+    delete process.env.META_WHATSAPP_SIMULATE;
+    process.env.META_WHATSAPP_ACCESS_TOKEN = 'test-token';
+    process.env.META_WHATSAPP_PHONE_NUMBER_ID = '1448961308297408';
+    const profile = { id: 'cust-1', full_name: 'Soyab', phone: '9970897799', whatsapp_consent: true };
+    const sb = { from: () => ({ select: () => ({ in: async () => ({ data: [profile] }) }) }) };
+    const booking = { id: 'BMP-NORETRY-1', customer_id: 'cust-1', professional_id: 'pro-none', service_title: 'Home Cleaning', total_paid: 999, date: '2026-11-21', time_slot: '3 PM', address: 'Flat 1, Mumbai' };
+    const result = await notifyBookingConfirmedMeta(booking, sb, { fetchImpl: fetchMock });
+    assert.equal(result.customer.accepted, false);
+    assert.equal(result.customer.result.status, 400);
+    assert.equal(calls, 1, 'a Meta 4xx is permanent: no retry');
+  } finally {
+    process.env = savedEnv;
+  }
+});
+
+test('notifyBookingConfirmedMeta does not retry network errors with no response (ambiguous outcome)', async () => {
+  const savedEnv = { ...process.env };
+  let calls = 0;
+  const fetchMock = async () => { calls++; throw new Error('socket hang up'); };
+  try {
+    delete process.env.NODE_ENV;
+    delete process.env.META_WHATSAPP_SIMULATE;
+    process.env.META_WHATSAPP_ACCESS_TOKEN = 'test-token';
+    process.env.META_WHATSAPP_PHONE_NUMBER_ID = '1448961308297408';
+    const profile = { id: 'cust-1', full_name: 'Soyab', phone: '9970897799', whatsapp_consent: true };
+    const sb = { from: () => ({ select: () => ({ in: async () => ({ data: [profile] }) }) }) };
+    const booking = { id: 'BMP-AMBIG-1', customer_id: 'cust-1', professional_id: 'pro-none', service_title: 'Home Cleaning', total_paid: 999, date: '2026-11-21', time_slot: '3 PM', address: 'Flat 1, Mumbai' };
+    const result = await notifyBookingConfirmedMeta(booking, sb, { fetchImpl: fetchMock });
+    assert.equal(result.customer.accepted, false);
+    assert.equal(calls, 1, 'no response received: outcome ambiguous, no blind retry (the request may have been accepted)');
+  } finally {
+    process.env = savedEnv;
+  }
 });
