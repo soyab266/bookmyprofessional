@@ -1,5 +1,5 @@
 import { sendUserEmail } from './email.js';
-import { notifyBookingConfirmed } from './whatsapp.js';
+import { notifyBookingConfirmedMeta } from './meta-whatsapp.js';
 import { formatMoney } from './money.js';
 
 // Process-level idempotency tracker to guarantee single delivery across concurrent requests
@@ -135,8 +135,8 @@ export async function dispatchBookingConfirmedNotifications(booking, supabase) {
       );
     }
 
-    // 5. WhatsApp Notifications (to Customer and Professional)
-    tasks.push(notifyBookingConfirmed(booking, supabase));
+    // 5. WhatsApp Notifications (to Customer and Professional) via Meta Cloud API
+    tasks.push(notifyBookingConfirmedMeta(booking, supabase));
 
     await Promise.allSettled(tasks);
     return { success: true };
