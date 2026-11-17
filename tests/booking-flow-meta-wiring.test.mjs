@@ -111,3 +111,54 @@ test('dispatch consults the provider gate (source-level)', async () => {
   assert.match(src, /bookingWhatsAppProvider\(\) === 'meta'/);
   assert.match(src, /notifyBookingConfirmed\(booking, supabase\)/, 'existing provider preserved as the default call');
 });
+
+test('failed Meta booking sends are queued for dispatcher retry', async () => {
+  const savedEnv = { ...process.env };
+  const inserted = [];
+  let fetchCalls = 0;
+  const fetchMock = async () => { fetchCalls++; return { ok: false, status: 500, text: async () => 'server error' }; };
+  try {
+    delete process.env.NODE_ENV;
+    delete process.env.META_WHATSAPP_SIMULATE;
+    process.env.META_WHATSAPP_ACCESS_TOKEN = 'test-token';
+    process.env.META_WHATSAPP_PHONE_NUMBER_ID = '1448961308297408';
+    const profiles = [CUSTOMER, PRO];
+    const sb = {
+      from(table) {
+        if (table === 'notification_outbox') {
+          return { async insert(record) { inserted.push(record); return { data: [record], error: null }; } };
+        }
+        return { select() { return { async in(col, ids) { return { data: profiles.filter((p) => ids.includes(p.id)) }; } }; } };
+      },
+    };
+    const booking = { ...BOOKING, id: `${BOOKING.id}-Q` };
+    const result = await dispatchBookingConfirmedNotifications(booking, sb, { fetchImpl: fetchMock });
+    assert.equal(result.success, true, 'booking flow itself still succeeds');
+    assert.equal(fetchCalls, 2, 'both parties: a single attempt each, no automatic resend of an ambiguous outcome');
+    assert.equal(inserted.length, 2, 'both failed sends recorded');
+    const byUser = Object.fromEntries(inserted.map((r) => [r.user_id, r]));
+    assert.equal(byUser['cust-1'].template, 'bmp_booking_received');
+    assert.equal(byUser['pro-1'].template, 'bmp_professional_booking_request');
+    assert.equal(byUser['cust-1'].status, 'uncertain', 'answered 5xx: held for reconciliation, never auto-resent');
+    assert.equal(byUser['cust-1'].channel, 'whatsapp');
+    assert.equal(byUser['cust-1'].payload.template.name, 'bmp_booking_received', 'exact payload preserved for retry');
+  } finally {
+    process.env = savedEnv;
+  }
+});
+
+test('simulated Meta booking sends are NOT queued for retry', async () => {
+  const inserted = [];
+  const profiles = [CUSTOMER, PRO];
+  const sb = {
+    from(table) {
+      if (table === 'notification_outbox') {
+        return { async insert(record) { inserted.push(record); return { data: [record], error: null }; } };
+      }
+      return { select() { return { async in(col, ids) { return { data: profiles.filter((p) => ids.includes(p.id)) }; } }; } };
+    },
+  };
+  const booking = { ...BOOKING, id: `${BOOKING.id}-SIM` };
+  await dispatchBookingConfirmedNotifications(booking, sb);
+  assert.equal(inserted.length, 0, 'simulated sends are not failures');
+});
