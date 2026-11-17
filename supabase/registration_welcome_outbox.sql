@@ -12,12 +12,12 @@ create table if not exists public.notification_outbox (
   channel text not null default 'whatsapp',
   template text not null,
   payload jsonb not null,
-  status text not null default 'pending', -- pending | sent | failed | skipped
+  status text not null default 'pending', -- pending | sending (claimed) | accepted (Meta accepted; NOT proof of delivery) | failed | skipped | uncertain (held for reconciliation, never auto-resent)
   attempts integer not null default 0,
   last_error text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  sent_at timestamptz
+  accepted_at timestamptz
 );
 
 -- One active welcome per user and template.
