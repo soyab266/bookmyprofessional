@@ -71,10 +71,13 @@ create policy "service role full access"
   using (true)
   with check (true);
 
--- Atomically take one send slot under both caps. Returns true iff the slot
--- was taken. Concurrent callers serialize on the single row's lock; the
--- loser of the race for the LAST slot gets false.
-create or replace function public.reserve_welcome_send() returns boolean
+-- Atomically take one send slot under both caps. Returns
+--   {"taken": true, "day": <IST date reserved against>}  when a slot was
+--   taken, or {"taken": false} when a cap is reached. The day is returned
+--   so a later release can target the SAME day's counter (see below).
+-- Concurrent callers serialize on the single row's lock; the loser of the
+-- race for the LAST slot gets taken=false.
+create or replace function public.reserve_welcome_send() returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare
   v_today date := (now() at time zone 'Asia/Kolkata')::date;
@@ -89,17 +92,37 @@ begin
      and total_used < total_cap
      and (day_key <> v_today or daily_used < daily_cap);
   get diagnostics v_taken = row_count;
-  return v_taken > 0;
+  if v_taken > 0 then
+    return jsonb_build_object('taken', true, 'day', v_today);
+  end if;
+  return jsonb_build_object('taken', false);
 end; $$;
 
 -- Give one slot back when Meta was definitely never reached. Never drops
 -- below zero (defensive against double-release after a crash/retry mixup).
-create or replace function public.release_welcome_send() returns void
+-- p_day is the day the reservation was taken against (from the reserve
+-- result). total_used always gives the slot back; daily_used is decremented
+-- ONLY when that same day is still the current budget day - so a release
+-- landing after midnight never eats into the NEW day's allowance.
+create or replace function public.release_welcome_send(p_day date) returns void
 language plpgsql security definer set search_path = public as $$
 begin
   update public.notification_dispatch_budget
-     set daily_used = greatest(daily_used - 1, 0),
-         total_used = greatest(total_used - 1, 0),
+     set total_used = greatest(total_used - 1, 0),
+         daily_used = case when day_key = p_day
+                           then greatest(daily_used - 1, 0)
+                           else daily_used end,
          updated_at = now()
    where id = 1;
 end; $$;
+
+-- ACCESS CONTROL (verified offline against PostgreSQL 16, 18 Nov):
+--   PostgreSQL grants EXECUTE on new functions to PUBLIC by default - left
+--   alone, anon/authenticated (and anyone with database access) could call
+--   reserve/release and rewrite the budget. Close that explicitly; only the
+--   service role (server) may call them. Direct table access is already
+--   blocked for non-owners by RLS above (no policy for anon/authenticated).
+revoke all on function public.reserve_welcome_send() from public, anon, authenticated;
+revoke all on function public.release_welcome_send(date) from public, anon, authenticated;
+grant execute on function public.reserve_welcome_send() to service_role;
+grant execute on function public.release_welcome_send(date) to service_role;
