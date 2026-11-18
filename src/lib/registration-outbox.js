@@ -12,6 +12,7 @@ import {
   buildProfessionalRegistrationReceived,
 } from './meta-whatsapp-templates.js';
 import { sendMetaTemplateMessage, classifySendOutcome } from './meta-whatsapp.js';
+import { isMetaTrackingEnabled, reconcileStagedStatusEvents } from './meta-tracking.js';
 
 export const OUTBOX_TABLE = 'notification_outbox';
 
@@ -106,12 +107,18 @@ export async function listPendingOutbox(supabase, { limit = 50 } = {}) {
 
 async function updateOutbox(supabase, id, fields) {
   try {
-    await supabase
+    const { error } = await supabase
       .from(OUTBOX_TABLE)
       .update({ ...fields, updated_at: new Date().toISOString() })
       .eq('id', id);
-  } catch {
-    // best-effort status update
+    if (error) {
+      // best-effort status update, but never silent: a failed write (e.g.
+      // tracking enabled before its storage migration is applied) must be
+      // visible in logs - the row's persisted state may now be stale.
+      console.error('[Outbox] status update failed:', error.message || error);
+    }
+  } catch (err) {
+    console.error('[Outbox] status update exception:', err?.message || err);
   }
 }
 
@@ -266,12 +273,36 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
       // If this persistence write fails, the row stays 'sending' and the
       // stale-claim sweep later holds it as 'uncertain' - it can never
       // return to pending and be resent automatically.
-      await updateOutbox(supabase, row.id, {
+      const acceptedUpdate = {
         status: 'accepted',
         attempts: (row.attempts ?? 0) + 1,
         accepted_at: new Date().toISOString(),
         last_error: null,
-      });
+      };
+      // Delivery tracking only when explicitly enabled (storage migration +
+      // env approved). The wamid rides on the SAME write as the acceptance
+      // mark - no extra write path - so a persistence failure keeps the
+      // existing semantics exactly (row held, never auto-resent). When
+      // disabled, the update is identical to before; the disabled state is
+      // reported in the dispatch result, never silent.
+      if (isMetaTrackingEnabled()) {
+        if (result.metaMessageId) {
+          acceptedUpdate.meta_message_id = result.metaMessageId;
+        } else {
+          console.error('[MetaTracking] enabled but Meta response carried no message id; acceptance recorded without tracking id.');
+        }
+      }
+      await updateOutbox(supabase, row.id, acceptedUpdate);
+      // Reconcile any status events that arrived before this row carried the
+      // wamid (webhook/acceptance race): they were staged durably, not lost.
+      // Best-effort and logged; never changes the acceptance outcome.
+      if (isMetaTrackingEnabled() && result.metaMessageId) {
+        try {
+          await reconcileStagedStatusEvents(supabase, result.metaMessageId);
+        } catch (err) {
+          console.error('[MetaTracking] reconcile exception:', err?.message || err);
+        }
+      }
       accepted++;
     } else {
       const outcome = classifySendOutcome(result);
@@ -305,5 +336,11 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
     }
   }
 
-  return { accepted, failed, skipped, uncertain };
+  return {
+    accepted,
+    failed,
+    skipped,
+    uncertain,
+    tracking: isMetaTrackingEnabled() ? 'enabled' : 'disabled',
+  };
 }

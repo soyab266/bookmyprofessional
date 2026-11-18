@@ -212,7 +212,7 @@ test('dispatchRegistrationWelcomeOutbox sends pending rows and marks them accept
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async (p) => { sentPayloads.push(p); return { success: true }; },
   });
-  assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, tracking: 'disabled' });
   assert.equal(sentPayloads.length, 1);
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'accepted');
@@ -226,7 +226,7 @@ test('dispatchRegistrationWelcomeOutbox holds ambiguous send failures as uncerta
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => ({ success: false, error: 'api_error' }),
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 1 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 1, tracking: 'disabled' });
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'uncertain'); // attempted, acceptance unknown: held for reconciliation
   assert.equal(row.attempts, 1);
@@ -242,7 +242,7 @@ test('dispatchRegistrationWelcomeOutbox marks max-attempt rows as failed without
     sendImpl: async () => { sendCalls++; return { success: true }; },
     maxAttempts: 5,
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 1, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 1, skipped: 0, uncertain: 0, tracking: 'disabled' });
   assert.equal(sendCalls, 0);
   assert.equal(sb.rows.find((r) => r.id === 'a').status, 'failed');
   assert.equal(sb.rows.find((r) => r.id === 'a').last_error, 'max_attempts_reached');
@@ -253,7 +253,7 @@ test('dispatchRegistrationWelcomeOutbox never marks a simulated send as sent', a
   const sb = mockSupabase([{ id: 'a', user_id: 'u1', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload }]);
   // default sender = real connector, which simulates under NODE_ENV=test
   const summary = await dispatchRegistrationWelcomeOutbox(sb);
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0, tracking: 'disabled' });
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'pending');
   assert.equal(row.attempts, 0); // a simulated attempt is not burned
@@ -266,7 +266,7 @@ test('dispatchRegistrationWelcomeOutbox counts a missing-credentials skip withou
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => ({ success: false, skipped: 'missing_credentials' }),
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0, tracking: 'disabled' });
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'pending');
   assert.equal(row.last_error, 'missing_credentials');
@@ -311,7 +311,7 @@ test('dispatchRegistrationWelcomeOutbox without supabase reports an error, not z
 test('dispatchRegistrationWelcomeOutbox on a genuinely empty queue returns zeros with no error', async () => {
   const sb = mockSupabase([]);
   const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => ({ success: true }) });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, tracking: 'disabled' });
   assert.equal('error' in summary, false);
 });
 
@@ -328,7 +328,7 @@ test('dispatch skips and never sends when consent was withdrawn while queued', a
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => { sends++; return { success: true }; },
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0, tracking: 'disabled' });
   assert.equal(sends, 0);
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'skipped');
@@ -397,10 +397,10 @@ test('dispatch claims rows so a concurrent dispatcher never double-sends', async
   const runA = dispatchRegistrationWelcomeOutbox(sb, { sendImpl: blockingSend });
   await startedPromise; // A has claimed the row and is inside the send
   const summaryB = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
-  assert.deepEqual(summaryB, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 }, 'concurrent run sees no claimable rows');
+  assert.deepEqual(summaryB, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, tracking: 'disabled' }, 'concurrent run sees no claimable rows');
   release();
   const summaryA = await runA;
-  assert.deepEqual(summaryA, { accepted: 1, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summaryA, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, tracking: 'disabled' });
   assert.equal(sends, 1, 'exactly one send happened for one queued row');
   assert.equal(sb.rows.find((r) => r.id === 'r-race').status, 'accepted');
 });
@@ -411,7 +411,7 @@ test('dispatch HOLDS orphaned sending claims older than 10 minutes (crashed work
   ]);
   let sends = 0;
   const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, tracking: 'disabled' });
   assert.equal(sends, 0, 'a stale claim is never automatically resent');
   const row = sb.rows.find((r) => r.id === 'r-stale');
   assert.equal(row.status, 'uncertain');
@@ -424,7 +424,7 @@ test('dispatch leaves fresh sending claims untouched', async () => {
   ]);
   let sends = 0;
   const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, tracking: 'disabled' });
   assert.equal(sends, 0);
   assert.equal(sb.rows.find((r) => r.id === 'r-live').status, 'sending');
 });
