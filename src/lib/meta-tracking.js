@@ -89,9 +89,16 @@ export function splitMetaWebhookPayload(payload) {
  * Record one status update against its outbox row (looked up by the provider
  * message id stored at acceptance). Never throws.
  *
- * Ordering/dedup guard: a status only moves the row forward (STATUS_RANK);
- * a same-or-lower rank arrival (duplicate retry or out-of-order event) is
- * reported { matched: true, applied: false } and changes nothing.
+ * Ordering/dedup guard, ATOMIC: the UPDATE carries
+ *   WHERE delivery_status_rank IS NULL OR delivery_status_rank < <incoming>
+ * which Postgres evaluates under the row lock at write time. Concurrent
+ * webhook handlers serialize on that lock and the loser's condition is
+ * re-checked after waiting, so no interleaving can regress a row (a late
+ * 'sent' can never overwrite 'delivered'), and duplicate retries are
+ * idempotent - with no read-then-write window. When the conditional update
+ * matches nothing, one follow-up read distinguishes "row doesn't exist"
+ * (unknown_message_id) from "guard rejected" (stale_or_duplicate); that
+ * read drives reporting only, never a write.
  *
  * An update whose message id no row holds - a message accepted before
  * tracking existed, or the webhook/acceptance race - is reported unmatched;
@@ -102,9 +109,30 @@ export function splitMetaWebhookPayload(payload) {
 export async function recordMetaStatusUpdate(supabase, update) {
   if (!supabase || !update?.metaMessageId) return { matched: false, reason: 'invalid_update' };
   try {
+    const rank = STATUS_RANK[update.status] ?? 0;
+    const { data: updated, error } = await supabase
+      .from('notification_outbox')
+      .update({
+        delivery_status: update.status,
+        delivery_status_rank: rank,
+        delivery_status_at: update.statusAt || new Date().toISOString(),
+        delivery_error: update.error,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('meta_message_id', update.metaMessageId)
+      // Atomic forward-only guard (rank is a small int from a fixed map).
+      .or(`delivery_status_rank.is.null,delivery_status_rank.lt.${rank}`)
+      .select('id');
+    if (error) {
+      console.error('[MetaTracking] status update write failed:', error.message || error);
+      return { matched: false, reason: 'write_failed' };
+    }
+    if (updated && updated.length) return { matched: true, applied: true };
+
+    // Nothing written: row missing, or guard rejected. Read only to report.
     const { data: rows, error: readError } = await supabase
       .from('notification_outbox')
-      .select('id, delivery_status')
+      .select('id')
       .eq('meta_message_id', update.metaMessageId)
       .limit(1);
     if (readError) {
@@ -112,29 +140,7 @@ export async function recordMetaStatusUpdate(supabase, update) {
       return { matched: false, reason: 'read_failed' };
     }
     if (!rows || !rows.length) return { matched: false, reason: 'unknown_message_id' };
-
-    const current = rows[0].delivery_status || null;
-    const currentRank = STATUS_RANK[current] ?? 0;
-    const incomingRank = STATUS_RANK[update.status] ?? 0;
-    if (current && currentRank >= incomingRank) {
-      // Duplicate retry or out-of-order event: keep the further-along state.
-      return { matched: true, applied: false, reason: 'stale_or_duplicate' };
-    }
-
-    const { error } = await supabase
-      .from('notification_outbox')
-      .update({
-        delivery_status: update.status,
-        delivery_status_at: update.statusAt || new Date().toISOString(),
-        delivery_error: update.error,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('meta_message_id', update.metaMessageId);
-    if (error) {
-      console.error('[MetaTracking] status update write failed:', error.message || error);
-      return { matched: false, reason: 'write_failed' };
-    }
-    return { matched: true, applied: true };
+    return { matched: true, applied: false, reason: 'stale_or_duplicate' };
   } catch (err) {
     console.error('[MetaTracking] status update exception:', err?.message || err);
     return { matched: false, reason: 'exception' };
@@ -208,12 +214,18 @@ export async function reconcileStagedStatusEvents(supabase, metaMessageId) {
       error: best.error,
     });
 
-    const { error: delError } = await supabase
-      .from('meta_status_events')
-      .delete()
-      .eq('meta_message_id', metaMessageId);
-    if (delError) {
-      console.error('[MetaTracking] staged cleanup failed:', delError.message || delError);
+    // Only clear staging when the target row actually exists. If the
+    // acceptance row has not been saved yet (or the write failed), the
+    // staged events MUST survive for the next reconcile - deleting them
+    // here would lose them exactly in the race they exist for.
+    if (result.matched) {
+      const { error: delError } = await supabase
+        .from('meta_status_events')
+        .delete()
+        .eq('meta_message_id', metaMessageId);
+      if (delError) {
+        console.error('[MetaTracking] staged cleanup failed:', delError.message || delError);
+      }
     }
     return { applied: result.applied === true, matched: result.matched, staged: staged.length };
   } catch (err) {
