@@ -14,7 +14,7 @@ import { META_TEMPLATE } from '../src/lib/meta-whatsapp-templates.js';
 // In-memory mock of the supabase query builder covering the outbox flows.
 // profiles option: 'auto' (default: every requested id is consenting),
 // an array of profile rows, or { error: 'message' } for a failed read.
-function mockSupabase(initialRows = [], profiles = 'auto') {
+function mockSupabase(initialRows = [], profiles = 'auto', opts = {}) {
   const rows = initialRows.map((r, i) => ({ id: r.id || `row-${i + 1}`, attempts: 0, ...r }));
   let inserted = 0;
 
@@ -24,6 +24,7 @@ function mockSupabase(initialRows = [], profiles = 'auto') {
         if (f.op === 'eq') return row[f.col] === f.val;
         if (f.op === 'in') return f.val.includes(row[f.col]);
         if (f.op === 'lt') return String(row[f.col] || '') < String(f.val);
+        if (f.op === 'gte') return String(row[f.col] || '') >= String(f.val);
         return true;
       })
     );
@@ -36,7 +37,8 @@ function mockSupabase(initialRows = [], profiles = 'auto') {
       const isProfiles = table === 'profiles';
       const filters = [];
       const builder = {
-        select() {
+        select(cols, opts) {
+          if (opts && opts.count === 'exact' && opts.head === true) builder._headCount = true;
           return builder;
         },
         eq(col, val) {
@@ -49,6 +51,10 @@ function mockSupabase(initialRows = [], profiles = 'auto') {
         },
         lt(col, val) {
           filters.push({ op: 'lt', col, val });
+          return builder;
+        },
+        gte(col, val) {
+          filters.push({ op: 'gte', col, val });
           return builder;
         },
         order() {
@@ -86,6 +92,10 @@ function mockSupabase(initialRows = [], profiles = 'auto') {
           }
           if (builder._insertedId) {
             return resolve({ data: [{ id: builder._insertedId }], error: null });
+          }
+          if (builder._headCount) {
+            if (opts.countError) return resolve({ data: null, count: null, error: { message: 'count failed' } });
+            return resolve({ data: null, count: applyFilters(rows, filters).length, error: null });
           }
           let data = applyFilters(rows, filters);
           if (builder._limit) data = data.slice(0, builder._limit);
@@ -212,7 +222,7 @@ test('dispatchRegistrationWelcomeOutbox sends pending rows and marks them accept
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async (p) => { sentPayloads.push(p); return { success: true }; },
   });
-  assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal(sentPayloads.length, 1);
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'accepted');
@@ -226,7 +236,7 @@ test('dispatchRegistrationWelcomeOutbox holds ambiguous send failures as uncerta
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => ({ success: false, error: 'api_error' }),
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 1 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 1, capped: 0 });
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'uncertain'); // attempted, acceptance unknown: held for reconciliation
   assert.equal(row.attempts, 1);
@@ -242,7 +252,7 @@ test('dispatchRegistrationWelcomeOutbox marks max-attempt rows as failed without
     sendImpl: async () => { sendCalls++; return { success: true }; },
     maxAttempts: 5,
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 1, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 1, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal(sendCalls, 0);
   assert.equal(sb.rows.find((r) => r.id === 'a').status, 'failed');
   assert.equal(sb.rows.find((r) => r.id === 'a').last_error, 'max_attempts_reached');
@@ -253,7 +263,7 @@ test('dispatchRegistrationWelcomeOutbox never marks a simulated send as sent', a
   const sb = mockSupabase([{ id: 'a', user_id: 'u1', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload }]);
   // default sender = real connector, which simulates under NODE_ENV=test
   const summary = await dispatchRegistrationWelcomeOutbox(sb);
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0, capped: 0 });
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'pending');
   assert.equal(row.attempts, 0); // a simulated attempt is not burned
@@ -266,7 +276,7 @@ test('dispatchRegistrationWelcomeOutbox counts a missing-credentials skip withou
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => ({ success: false, skipped: 'missing_credentials' }),
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0, capped: 0 });
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'pending');
   assert.equal(row.last_error, 'missing_credentials');
@@ -311,7 +321,7 @@ test('dispatchRegistrationWelcomeOutbox without supabase reports an error, not z
 test('dispatchRegistrationWelcomeOutbox on a genuinely empty queue returns zeros with no error', async () => {
   const sb = mockSupabase([]);
   const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => ({ success: true }) });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal('error' in summary, false);
 });
 
@@ -328,7 +338,7 @@ test('dispatch skips and never sends when consent was withdrawn while queued', a
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => { sends++; return { success: true }; },
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0, capped: 0 });
   assert.equal(sends, 0);
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'skipped');
@@ -397,10 +407,10 @@ test('dispatch claims rows so a concurrent dispatcher never double-sends', async
   const runA = dispatchRegistrationWelcomeOutbox(sb, { sendImpl: blockingSend });
   await startedPromise; // A has claimed the row and is inside the send
   const summaryB = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
-  assert.deepEqual(summaryB, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 }, 'concurrent run sees no claimable rows');
+  assert.deepEqual(summaryB, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 0 }, 'concurrent run sees no claimable rows');
   release();
   const summaryA = await runA;
-  assert.deepEqual(summaryA, { accepted: 1, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summaryA, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal(sends, 1, 'exactly one send happened for one queued row');
   assert.equal(sb.rows.find((r) => r.id === 'r-race').status, 'accepted');
 });
@@ -411,7 +421,7 @@ test('dispatch HOLDS orphaned sending claims older than 10 minutes (crashed work
   ]);
   let sends = 0;
   const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal(sends, 0, 'a stale claim is never automatically resent');
   const row = sb.rows.find((r) => r.id === 'r-stale');
   assert.equal(row.status, 'uncertain');
@@ -424,7 +434,7 @@ test('dispatch leaves fresh sending claims untouched', async () => {
   ]);
   let sends = 0;
   const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal(sends, 0);
   assert.equal(sb.rows.find((r) => r.id === 'r-live').status, 'sending');
 });
@@ -449,4 +459,69 @@ test('accepted send with failed status persistence never returns the row to pend
   assert.equal(summary.accepted, 1, 'Meta accepted the message');
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'sending', 'row stays claimed; the stale sweep later holds it as uncertain - it can never return to pending and be resent automatically');
+});
+
+// --- Budget caps (message volume, never rupees) ----------------------------
+
+function acceptedSeedRows(n) {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `cap-${i}`,
+    status: 'accepted',
+    accepted_at: new Date().toISOString(),
+  }));
+}
+
+const CAP_PENDING = {
+  id: 'cap-pending',
+  user_id: 'u-customer',
+  template: META_TEMPLATE.CUSTOMER_REGISTRATION,
+  payload: DISPATCH_PAYLOAD,
+  status: 'pending',
+  created_at: new Date().toISOString(),
+};
+
+test('dispatch stops claiming when the daily accept cap is reached; rows stay pending, no attempts burned', async () => {
+  const sb = mockSupabase([...acceptedSeedRows(25), CAP_PENDING]);
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => { sends++; return { success: true }; },
+  });
+  assert.equal(sends, 0, 'nothing is sent once the daily cap is reached');
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 1 });
+  const row = sb.rows.find((r) => r.id === 'cap-pending');
+  assert.equal(row.status, 'pending', 'capped row stays pending for a later run');
+  assert.equal(row.attempts, 0, 'capped row burns no attempt');
+});
+
+test('dispatch counts in-flight sending rows toward the cap (concurrent runs see each other)', async () => {
+  const sb = mockSupabase([
+    ...acceptedSeedRows(24),
+    { id: 'cap-inflight', status: 'sending', updated_at: new Date().toISOString() },
+    CAP_PENDING,
+  ]);
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => { sends++; return { success: true }; },
+  });
+  assert.equal(sends, 0, '24 accepted + 1 in-flight = daily cap 25, so no send');
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 1 });
+});
+
+test('dispatch fails closed (no sends) when a budget count cannot be read', async () => {
+  const sb = mockSupabase([CAP_PENDING], 'auto', { countError: true });
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => { sends++; return { success: true }; },
+  });
+  assert.equal(sends, 0, 'unreadable budget means no sends this run');
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 1 });
+  assert.equal(sb.rows.find((r) => r.id === 'cap-pending').status, 'pending');
+});
+
+test('dispatch under the caps still sends normally', async () => {
+  const sb = mockSupabase([CAP_PENDING]);
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: true }),
+  });
+  assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
 });
