@@ -31,6 +31,28 @@
 --   app UI. Consent and phone are re-read from the profile at confirmation
 --   time, which is fresher than signup-time data.
 --
+-- INSERT COVERAGE (reviewed 18 Nov, second round): the trigger fires AFTER
+-- INSERT OR UPDATE, not only on the NULL->set UPDATE, so an auth user
+-- created ALREADY confirmed (e.g. admin.createUser with email_confirm, a
+-- pre-verified OAuth identity, or any future flow that inserts
+-- email_confirmed_at directly) is covered by the same gate. The partial
+-- unique index makes the two firing paths overlap-safe (one active welcome
+-- per user+template).
+--
+-- SUPPORTED SIGNUP AUDIENCE (precise):
+--   - Email+password registrations (app UI OR direct signUp API call) that
+--     go on to confirm their email: welcome queued at confirmation, if the
+--     profile then has whatsapp_consent=true and a phone.
+--   - Google OAuth registrations (src/app/api/auth/google/callback): the
+--     OAuth metadata carries NO phone and NO whatsapp_consent (verified in
+--     the callback route), so the consent+phone checks queue nothing. OAuth
+--     users are OUT of the welcome audience by data shape. (If they later
+--     add phone+consent in settings, that profile UPDATE is a separate,
+--     future path - not covered by this trigger.)
+--   The welcome therefore goes only to a self-declared phone attached to a
+--   CONFIRMED-email account. The phone itself is never verified by any
+--   current flow - see the honesty note below.
+--
 -- WHAT THIS DOES NOT FIX (stated honestly):
 --   The PHONE number itself remains unverified - a confirmed-email user can
 --   still register with someone else's phone. Closing that needs a phone-OTP
@@ -61,8 +83,13 @@ declare
   v_template text;
   v_name text;
 begin
-  -- Fire only on the NULL -> confirmed transition.
-  if old.email_confirmed_at is not null or new.email_confirmed_at is null then
+  -- Fire only when this row is now confirmed, and either it was just
+  -- inserted that way (pre-confirmed flows) or it transitioned NULL -> set
+  -- (normal email confirmation).
+  if new.email_confirmed_at is null then
+    return new;
+  end if;
+  if TG_OP = 'UPDATE' and old.email_confirmed_at is not null then
     return new;
   end if;
 
@@ -124,5 +151,5 @@ end; $$;
 
 drop trigger if exists on_auth_user_confirmed_enqueue_welcome on auth.users;
 create trigger on_auth_user_confirmed_enqueue_welcome
-  after update of email_confirmed_at on auth.users
+  after insert or update of email_confirmed_at on auth.users
   for each row execute function public.enqueue_registration_welcome_on_confirm();
