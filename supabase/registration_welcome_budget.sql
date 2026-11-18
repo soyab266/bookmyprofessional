@@ -55,7 +55,13 @@
 --   reservation while it is NULL (fail closed: unarmed = unsendable).
 --   At activation the owner-approved step arms it:
 --     update public.notification_dispatch_budget
---       set expires_at = now() + interval '2 days' where id = 1;
+--       set armed_at = now(), expires_at = now() + interval '2 days'
+--     where id = 1;
+--   armed_at is also the AUDIENCE CUTOFF used by the confirmed-email
+--   gating trigger (registration_welcome_confirmed_email_gating.sql):
+--   only accounts registered at or after armed_at can be queued, so an
+--   old account that confirms its email later is never messaged, and
+--   nothing queues after expiry either.
 --   Once expires_at passes, every reservation is denied - the hard stop
 --   lives in the reservation layer, so it covers the cron, manual POSTs
 --   and any other caller. pg_cron has no end-date support, so the job
@@ -80,6 +86,9 @@ create table if not exists public.notification_dispatch_budget (
   -- Hard pilot expiry: NULL until armed at activation; reserve denies
   -- while NULL or past. Set to activation time + 2 days at activation.
   expires_at timestamptz,
+  -- Pilot arming moment: also the audience cutoff for the gating
+  -- trigger (only accounts created at/after armed_at can be queued).
+  armed_at timestamptz,
   updated_at timestamptz not null default now()
 );
 
