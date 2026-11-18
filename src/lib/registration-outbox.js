@@ -139,6 +139,78 @@ async function claimOutboxRow(supabase, id) {
 // and returned to pending at the start of the next dispatch.
 const STALE_CLAIM_MS = 10 * 60 * 1000;
 
+// ---------------------------------------------------------------------------
+// Budget caps - message VOLUME, never rupees.
+//
+// These caps bound how many rows the dispatcher will claim. They are checked
+// FRESH before every single claim (not once per invocation), counting both
+// in-flight ('sending') and completed ('accepted') rows, so a concurrent
+// invocation's claims are visible to this one as soon as they commit. The
+// residual overshoot window is the microseconds between one invocation's
+// count and its claim, and is bounded by the number of truly simultaneous
+// invocations (in practice <= 2: the 5-minute cron plus a manual call) -
+// never by the batch size. Rows over the cap stay pending, burn no attempt,
+// and are picked up by a later run: nothing is lost when a cap bites.
+//
+// This is NOT a money cap and is never described as one: Meta charges per
+// DELIVERED message plus applicable tax (unverified), so an accept count
+// cannot bound rupees. The rupee bound is the prepaid balance, which only
+// the owner funds; funding level is a separate owner decision.
+//
+// Defaults are deliberately small; the owner sets the real numbers at
+// activation via Vercel env (WELCOME_DAILY_ACCEPT_CAP /
+// WELCOME_TOTAL_ACCEPT_CAP). A count failure fails CLOSED (no sends).
+function parseCap(value, fallback) {
+  const n = Number.parseInt(value, 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
+const DAILY_ACCEPT_CAP = parseCap(process.env.WELCOME_DAILY_ACCEPT_CAP, 25);
+const TOTAL_ACCEPT_CAP = parseCap(process.env.WELCOME_TOTAL_ACCEPT_CAP, 500);
+
+// Start of the current day in Asia/Kolkata (UTC+5:30, no DST) as a UTC ISO
+// string, for comparing against accepted_at timestamptz values.
+function istDayStartIso() {
+  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+  const nowAsIst = new Date(Date.now() + IST_OFFSET_MS);
+  const istDayStartUtc = Date.UTC(
+    nowAsIst.getUTCFullYear(),
+    nowAsIst.getUTCMonth(),
+    nowAsIst.getUTCDate()
+  );
+  return new Date(istDayStartUtc - IST_OFFSET_MS).toISOString();
+}
+
+async function headCount(supabase, build) {
+  try {
+    let q = supabase.from(OUTBOX_TABLE).select('id', { count: 'exact', head: true });
+    q = build(q);
+    const { count, error } = await q;
+    if (error) return null;
+    return count ?? 0;
+  } catch {
+    return null;
+  }
+}
+
+// Fresh budget picture. 'sending' rows count against BOTH windows: they are
+// in-flight sends whose cost may land in either window, and counting them is
+// what makes concurrent invocations see each other's work.
+// Returns null when any count fails (caller must fail closed).
+async function budgetUsage(supabase) {
+  const dayStart = istDayStartIso();
+  const [acceptedToday, sendingNow, acceptedTotal] = await Promise.all([
+    headCount(supabase, (q) => q.eq('status', 'accepted').gte('accepted_at', dayStart)),
+    headCount(supabase, (q) => q.eq('status', 'sending')),
+    headCount(supabase, (q) => q.eq('status', 'accepted')),
+  ]);
+  if (acceptedToday === null || sendingNow === null || acceptedTotal === null) return null;
+  return {
+    daily: acceptedToday + sendingNow,
+    total: acceptedTotal + sendingNow,
+  };
+}
+
 /**
  * Dispatch pending welcome messages through the Meta connector.
  *
@@ -147,7 +219,7 @@ const STALE_CLAIM_MS = 10 * 60 * 1000;
  * @param {Function} [deps.sendImpl] - defaults to sendMetaTemplateMessage (tests inject)
  * @param {number}   [deps.limit]
  * @param {number}   [deps.maxAttempts] - rows at or above this count are marked failed
- * @returns {Promise<{accepted: number, failed: number, skipped: number, uncertain: number}>}
+ * @returns {Promise<{accepted: number, failed: number, skipped: number, uncertain: number, capped: number}>}
  */
 export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, limit = 50, maxAttempts = 5 } = {}) {
   const send = sendImpl || sendMetaTemplateMessage;
@@ -157,7 +229,7 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
   // for callers that only need a best-effort list; the dispatcher must not -
   // a failed read that looks like "nothing to send" would hide an outage.)
   if (!supabase || typeof supabase.from !== 'function') {
-    return { accepted: 0, failed: 0, skipped: 0, uncertain: 0, error: 'queue_read_failed: no_supabase' };
+    return { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 0, error: 'queue_read_failed: no_supabase' };
   }
   // Orphaned claims (crashed/interrupted worker) are HELD for reconciliation,
   // never automatically resent: the crashed worker may have delivered the
@@ -182,17 +254,18 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
       .order('created_at', { ascending: true })
       .limit(limit);
     if (readError) {
-      return { accepted: 0, failed: 0, skipped: 0, uncertain: 0, error: `queue_read_failed: ${readError.message || readError}` };
+      return { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 0, error: `queue_read_failed: ${readError.message || readError}` };
     }
     rows = data || [];
   } catch (err) {
-    return { accepted: 0, failed: 0, skipped: 0, uncertain: 0, error: `queue_read_failed: ${err?.message || err}` };
+    return { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 0, error: `queue_read_failed: ${err?.message || err}` };
   }
 
   let accepted = 0;
   let failed = 0;
   let skipped = 0;
   let uncertain = 0;
+  let capped = 0;
 
   // Fresh consent check at dispatch: queue-time consent is not enough - a
   // user who opted out (or whose phone/consent changed) while queued must not
@@ -243,6 +316,17 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
       await updateOutbox(supabase, row.id, { status: 'skipped', last_error: 'consent_withdrawn' });
       skipped++;
       continue;
+    }
+
+    // Budget check, fresh for THIS row (see budgetUsage): rows beyond the
+    // daily or all-in accept cap stay pending for a later run, burn no
+    // attempt, and are never dropped. Rows are processed oldest-first, so
+    // once a cap bites every later row is also over it - stop the run.
+    // A count failure fails closed (budget === null): no sends this run.
+    const budget = await budgetUsage(supabase);
+    if (!budget || budget.daily >= DAILY_ACCEPT_CAP || budget.total >= TOTAL_ACCEPT_CAP) {
+      capped = rows.length - (accepted + failed + skipped + uncertain);
+      break;
     }
 
     // Atomically claim the row before sending: if another dispatcher claimed
@@ -305,5 +389,5 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
     }
   }
 
-  return { accepted, failed, skipped, uncertain };
+  return { accepted, failed, skipped, uncertain, capped };
 }
