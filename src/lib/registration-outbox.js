@@ -152,14 +152,18 @@ const STALE_CLAIM_MS = 10 * 60 * 1000;
 // invocation can take the last available slot. The reservation IS the lock -
 // there is no count/claim window to race.
 //
-// Reservation lifecycle:
+// Reservation lifecycle (the owner-approved cap counts ATTEMPTS = real
+// Meta requests, not accepted/successful messages):
 //   KEPT     - Meta accepted the message, and
-//            - the outcome is 'uncertain' (Meta MAY have accepted it: a held,
-//              possibly real send, so it must consume budget - otherwise
-//              retries alongside held uncertains could ratchet spend).
-//   RELEASED - Meta was definitely never reached: claim lost to a concurrent
-//              run, simulated send, not-attempted outcomes (missing
-//              credentials, payload validation). Those cost nothing.
+//            - every other outcome where a real request was spent:
+//              synchronous Meta rejection (HTTP error response) AND
+//              network-ambiguous 'uncertain' (Meta MAY have accepted it).
+//              A held, possibly real send must consume budget - otherwise
+//              retries alongside held outcomes could ratchet spend.
+//   RELEASED - Meta was definitely never reached: claim lost to a
+//              concurrent run, simulated send, not-attempted outcomes
+//              (missing credentials, payload validation). Those cost
+//              nothing - no request was made.
 // A crash between reserve and persist leaks one slot; leaks only ever
 // REDUCE what can be sent, so the failure direction is safe (documented in
 // the budget SQL).
