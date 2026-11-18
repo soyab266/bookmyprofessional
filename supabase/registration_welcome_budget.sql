@@ -34,9 +34,11 @@
 --   - Day boundary: daily_used resets lazily inside the same atomic UPDATE
 --     when the IST day changes (Asia/Kolkata, UTC+5:30, no DST).
 --
--- CAP NUMBERS: seeded at the conservative defaults 25/day and 500 all-in.
---   The owner sets the real numbers at activation with one UPDATE on this
---   row (no code or env change needed):
+-- CAP NUMBERS: seeded at the PROPOSED conservative caps 5/day and 20 all-in
+--   (proposal pending owner approval 18 Nov - these are NOT approved
+--   numbers). When either cap is reached, dispatch STOPS and queued rows
+--   wait for owner review: nothing else sends until the owner raises a cap
+--   with one UPDATE on this row (no code or env change needed):
 --     update public.notification_dispatch_budget
 --       set daily_cap = <N>, total_cap = <M> where id = 1;
 --
@@ -51,8 +53,8 @@ create table if not exists public.notification_dispatch_budget (
   day_key date not null default ((now() at time zone 'Asia/Kolkata')::date),
   daily_used integer not null default 0 check (daily_used >= 0),
   total_used integer not null default 0 check (total_used >= 0),
-  daily_cap integer not null default 25 check (daily_cap >= 0),
-  total_cap integer not null default 500 check (total_cap >= 0),
+  daily_cap integer not null default 5 check (daily_cap >= 0),
+  total_cap integer not null default 20 check (total_cap >= 0),
   updated_at timestamptz not null default now()
 );
 
