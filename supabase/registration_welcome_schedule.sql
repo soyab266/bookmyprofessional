@@ -1,0 +1,177 @@
+-- DRAFT migration for review - NOT applied to any environment.
+-- Registration welcome dispatch schedule: calls the already-deployed
+-- dispatcher route every 5 minutes through Supabase Cron (pg_cron + pg_net),
+-- authenticating with a secret held in Supabase Vault (never in this repo,
+-- never in chat, never in SQL history, never in a readable job definition).
+--
+-- Why this design (reviewed 18 Nov 2026):
+--   - The Vercel team is on the Hobby plan. Vercel's own docs state Hobby
+--     cron jobs can run only ONCE PER DAY (more frequent expressions fail
+--     deployment) and fire as HTTP GET with an Authorization: Bearer
+--     CRON_SECRET header - a poor fit for a welcome message and for the
+--     existing POST + X-Internal-Secret route.
+--     Source: https://vercel.com/docs/cron-jobs/manage-cron-jobs
+--   - Verified live on the production project (18 Nov): supabase_vault 0.3.1
+--     is ALREADY INSTALLED with a dashboard Secrets UI; pg_cron 1.6.4 and
+--     pg_net 0.20.4 are available (not yet enabled). The dispatcher route
+--     /api/notifications/registration-welcome is deployed (POST +
+--     X-Internal-Secret) and INTERNAL_SECRET exists in Vercel Production env.
+--
+-- SECRET HANDLING (no secret in any artifact, history, or readable job):
+--   At activation the existing INTERNAL_SECRET is stored as Vault secret
+--   'bmp_internal_secret' through the dashboard's Vault > Secrets > "Add new
+--   secret" form (Name / Description / masked Secret value). The value is
+--   filled from the owner's Instinct vault entry
+--   "BMP INTERNAL_SECRET (production dispatcher)" via the secure vault-fill
+--   flow: the owner approves the fill on supabase.com through the vault
+--   approval link, the value is typed by the vault, and it is never read,
+--   copied, pasted, or retrieved by anyone. No SQL editor statement and no
+--   SQL history ever contains the value. Rotation is NOT part of this work.
+--   The cron job below reads the secret through the vault.decrypted_secrets
+--   reference - the job definition contains only the secret NAME.
+--   vault.decrypted_secrets is readable by database owner roles (the owner
+--   themselves), which is accepted.
+--   If INTERNAL_SECRET is ever rotated in Vercel (separate decision), the
+--   Vault secret must be re-saved or dispatch stops with 401s.
+--
+-- BUDGET ENFORCEMENT - VOLUME ONLY, NEVER RUPEES (revised 18 Nov, 2nd round):
+--   Caps are enforced by ATOMIC RESERVATION, not by counting: every send
+--   from ANY dispatcher invocation (this cron, a manual POST, overlapping
+--   runs) must first take a slot through the reserve_welcome_send() RPC
+--   (supabase/registration_welcome_budget.sql) - one conditional increment
+--   of a single counter row in ONE UPDATE. PostgreSQL row locking serializes
+--   concurrent UPDATEs on that row, so exactly one invocation can take the
+--   last slot. There is no count/claim window to race, so there is NO
+--   overshoot bound to qualify: serialization is total across all
+--   invocations.
+--   - Reservations are KEPT for every REAL Meta request - accepted,
+--     synchronous rejection (HTTP error response), network-ambiguous
+--     'uncertain'. The approved cap counts ATTEMPTS, not accepted
+--     messages. RELEASED only when Meta was definitely never reached
+--     (claim lost, simulated, not-attempted incl. validation).
+--   - A worker crash between reserve and persist leaks one slot; leaks only
+--     ever REDUCE future sends (safe direction), owner can reset the row.
+--   - Cap numbers live in the budget row: 3/day IST and 3 all-in - the
+--     owner-approved pilot plan of 18 Nov ("Total 3 attempts in 2 days");
+--     activation itself remains a separate pending approval. The daily
+--     reset never replenishes the all-in cap. Reaching a cap stops
+--     dispatch for owner review; the owner changes them with one
+--     UPDATE - no code or env change.
+--   - HARD PILOT EXPIRY: the same budget row carries expires_at (NULL =
+--     unarmed; reserve denies every send while NULL). At activation it is
+--     set to the activation moment + 2 days; after it passes every
+--     reservation is denied, whichever caller asks. pg_cron has no
+--     end-date support, so the job keeps firing after expiry but each
+--     run is denied at reserve; unscheduling at pilot end is cleanup in
+--     the checklist below. Cap reached OR expiry passed - whichever
+--     first - ends the pilot for owner review.
+--   - Reserve denied or error fails CLOSED: rows stay pending, burn no
+--     attempt, and are retried by a later run.
+--   Earlier drafts (a cron-side WHERE count, then a per-claim count) were
+--   both REMOVED: any count-then-act design races under concurrency.
+--   THESE CAPS ARE NOT A MONEY CAP: Meta charges per DELIVERED message plus
+--   applicable tax (rate verified at base Rs0.115/Utility message, tax
+--   unverified), so no counter bounds rupees. The rupee bound is the prepaid
+--   balance (Rs100 available, UPI-funded, verified 18 Nov), which only the
+--   owner funds - funding level is a separate owner decision, not part of
+--   this draft.
+--
+-- BACKLOG / CUTOFF (no silent messaging of old accounts):
+--   - The enqueue trigger fires AFTER INSERT on profiles only, so no existing
+--     account is ever retroactively queued by applying the activation SQL.
+--   - Rows already sitting in notification_outbox before activation WOULD be
+--     dispatched by the first cron run. Live state verified 18 Nov ~19:54 IST
+--     (read-only count in the production SQL editor): the table holds exactly
+--     ONE row - the 10:19 test row, status 'accepted' (no pending, sending or
+--     uncertain rows), so today there is NO backlog that could dispatch.
+--     Re-verify at activation: review every existing row and mark any row
+--     that must not send as 'skipped' BEFORE scheduling the job. That is a
+--     one-time, owner-approved live step at activation - not part of this
+--     draft migration.
+--
+-- pg_net behavior relied on (Supabase docs):
+--   net.http_post is asynchronous fire-and-forget; responses land in
+--   net._http_response; there is no automatic retry and a failed call does
+--   not block or fail later cron runs. Default timeout is 2000 ms, too short
+--   for a Vercel cold start, so 30000 ms is set explicitly. A dropped or
+--   failed call degrades safely in the dispatcher: a row claimed mid-send
+--   is swept to 'uncertain' after 10 minutes and HELD (never auto-resent);
+--   pending rows are retried up to 5 attempts then marked failed.
+--   Source: https://supabase.com/docs/guides/database/extensions/pg_net
+--
+-- CADENCE: one authenticated POST every 5 minutes = 288/day (~8.6k/month).
+--   Observed on the Vercel Hobby usage meter (18 Nov): Function Invocations
+--   113K / 1M per 30 days, so the added calls are under 1% of the plan
+--   quota. A capped or empty run costs one function invocation doing a few
+--   cheap indexed counts.
+--
+-- REVERSAL (full):
+--   select cron.unschedule('registration-welcome-dispatch');
+--   -- optional: delete the 'bmp_internal_secret' entry in Vault > Secrets;
+--   -- optional: drop extension pg_net; drop extension pg_cron;
+-- Queued rows stay pending and unsent once unscheduled.
+
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+
+-- Applied verbatim at activation time (the secret value is resolved from
+-- Supabase Vault at run time, never written here). No cap arithmetic in the
+-- job itself: the dispatcher enforces caps per claim, so this job is a plain
+-- authenticated trigger and nothing else.
+--
+-- select cron.schedule(
+--   'registration-welcome-dispatch',
+--   '*/5 * * * *',
+--   $$
+--   select net.http_post(
+--     url := 'https://www.bookmyprofessional.com/api/notifications/registration-welcome',
+--     headers := (
+--       select jsonb_build_object(
+--         'Content-Type', 'application/json',
+--         'X-Internal-Secret', decrypted_secret
+--       )
+--       from vault.decrypted_secrets
+--       where name = 'bmp_internal_secret'
+--     ),
+--     body := '{}'::jsonb,
+--     timeout_milliseconds := 30000
+--   ) as request_id;
+--   $$
+-- );
+
+-- ACTIVATION CHECKLIST - exact staged order. EVERY stage waits on the
+-- explicit owner activation approval (none done now); stages 1-5 are
+-- inert-by-design (zero sends possible), stage 6 is the live moment.
+--   1. MERGE + DEPLOY: merge PR #27 and let Vercel deploy the changed
+--      dispatcher to production. Verify the route is live and fail-closed:
+--      the reserve RPC does not exist yet, so any dispatch attempt errors
+--      closed with ZERO sends (and an unauthenticated POST still gets 401).
+--   2. BUDGET, UNARMED: apply registration_welcome_budget.sql (caps 3/day,
+--      3 all-in, expires_at NULL). Verify as service_role that reserve
+--      returns taken:false (unarmed) and that anon/authenticated get
+--      permission denied. Nothing can send while unarmed.
+--   3. SECRET: save INTERNAL_SECRET as Vault secret 'bmp_internal_secret'
+--      via the dashboard Secrets UI + vault-fill flow described above.
+--   4. BACKLOG: re-review existing notification_outbox rows; mark anything
+--      that must not send 'skipped' (see BACKLOG / CUTOFF above).
+--   5. SCHEDULER ON, STILL UNARMED: apply this file's two create-extension
+--      statements and the cron.schedule call. Verify 2-3 runs:
+--        select jobname, schedule, active from cron.job;
+--        select status, error_msg, status_code
+--          from net._http_response order by created desc limit 5;
+--      Runs must show HTTP 200 with ZERO sends (reserve denies - unarmed).
+--   6. READINESS GATE (the live moment, still under the same explicit
+--      approval): apply registration_welcome_confirmed_email_gating.sql
+--      (queues on future email confirmations only; nothing retroactive),
+--      then ARM the 48-hour window:
+--        update public.notification_dispatch_budget
+--          set armed_at = now(), expires_at = now() + interval '2 days'
+--        where id = 1;
+--      The pilot clock starts at this UPDATE, not before. armed_at is
+--      also the audience cutoff: the gating trigger queues only accounts
+--      registered at or after it, so old accounts that confirm their
+--      email later are never messaged.
+--   7. PILOT END (all-in cap of 3 reached OR expires_at passed - reserve
+--      denies either way, so nothing more can send): unschedule the job
+--      (select cron.unschedule('registration-welcome-dispatch');) and
+--      review results with the owner before any further approval.

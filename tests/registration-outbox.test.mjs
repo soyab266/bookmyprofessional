@@ -14,9 +14,18 @@ import { META_TEMPLATE } from '../src/lib/meta-whatsapp-templates.js';
 // In-memory mock of the supabase query builder covering the outbox flows.
 // profiles option: 'auto' (default: every requested id is consenting),
 // an array of profile rows, or { error: 'message' } for a failed read.
-function mockSupabase(initialRows = [], profiles = 'auto') {
+const MOCK_BUDGET_DAY = new Date().toISOString().slice(0, 10);
+
+function mockSupabase(initialRows = [], profiles = 'auto', opts = {}) {
   const rows = initialRows.map((r, i) => ({ id: r.id || `row-${i + 1}`, attempts: 0, ...r }));
   let inserted = 0;
+  // In-memory mirror of the single-row budget counter the reserve/release
+  // RPCs maintain in production (supabase/registration_welcome_budget.sql).
+  // Defaults mirror the seeded owner-approved pilot plan (3/day, 3 all-in).
+  // The SQL's hard pilot expiry (expires_at NULL or past) reaches this
+  // layer as the same { taken: false } denial as a reached cap, so the
+  // denial tests below also cover the dispatcher's response to expiry.
+  const budget = { daily_used: 0, total_used: 0, daily_cap: 3, total_cap: 3, ...(opts.budget || {}) };
 
   function applyFilters(data, filters) {
     return data.filter((row) =>
@@ -24,6 +33,7 @@ function mockSupabase(initialRows = [], profiles = 'auto') {
         if (f.op === 'eq') return row[f.col] === f.val;
         if (f.op === 'in') return f.val.includes(row[f.col]);
         if (f.op === 'lt') return String(row[f.col] || '') < String(f.val);
+        if (f.op === 'gte') return String(row[f.col] || '') >= String(f.val);
         return true;
       })
     );
@@ -36,7 +46,8 @@ function mockSupabase(initialRows = [], profiles = 'auto') {
       const isProfiles = table === 'profiles';
       const filters = [];
       const builder = {
-        select() {
+        select(cols, opts) {
+          if (opts && opts.count === 'exact' && opts.head === true) builder._headCount = true;
           return builder;
         },
         eq(col, val) {
@@ -49,6 +60,10 @@ function mockSupabase(initialRows = [], profiles = 'auto') {
         },
         lt(col, val) {
           filters.push({ op: 'lt', col, val });
+          return builder;
+        },
+        gte(col, val) {
+          filters.push({ op: 'gte', col, val });
           return builder;
         },
         order() {
@@ -87,6 +102,10 @@ function mockSupabase(initialRows = [], profiles = 'auto') {
           if (builder._insertedId) {
             return resolve({ data: [{ id: builder._insertedId }], error: null });
           }
+          if (builder._headCount) {
+            if (opts.countError) return resolve({ data: null, count: null, error: { message: 'count failed' } });
+            return resolve({ data: null, count: applyFilters(rows, filters).length, error: null });
+          }
           let data = applyFilters(rows, filters);
           if (builder._limit) data = data.slice(0, builder._limit);
           return resolve({ data, error: null });
@@ -95,6 +114,29 @@ function mockSupabase(initialRows = [], profiles = 'auto') {
       // make the builder awaitable
       builder[Symbol.asyncIterator] = undefined;
       return builder;
+    },
+    budget,
+    async rpc(name, params) {
+      assert.ok(
+        name === 'reserve_welcome_send' || name === 'release_welcome_send',
+        `unexpected rpc ${name}`
+      );
+      if (opts.rpcError) return { data: null, error: { message: 'rpc failed' } };
+      if (name === 'reserve_welcome_send') {
+        if (budget.total_used >= budget.total_cap || budget.daily_used >= budget.daily_cap) {
+          return { data: { taken: false }, error: null };
+        }
+        budget.daily_used++;
+        budget.total_used++;
+        return { data: { taken: true, day: MOCK_BUDGET_DAY }, error: null };
+      }
+      // release_welcome_send(p_day): total always gives back; daily only when
+      // the reservation's day is still the current budget day (mirrors SQL).
+      budget.total_used = Math.max(0, budget.total_used - 1);
+      if (params && params.p_day === MOCK_BUDGET_DAY) {
+        budget.daily_used = Math.max(0, budget.daily_used - 1);
+      }
+      return { data: null, error: null };
     },
   };
   return api;
@@ -212,7 +254,7 @@ test('dispatchRegistrationWelcomeOutbox sends pending rows and marks them accept
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async (p) => { sentPayloads.push(p); return { success: true }; },
   });
-  assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal(sentPayloads.length, 1);
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'accepted');
@@ -226,7 +268,7 @@ test('dispatchRegistrationWelcomeOutbox holds ambiguous send failures as uncerta
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => ({ success: false, error: 'api_error' }),
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 1 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 1, capped: 0 });
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'uncertain'); // attempted, acceptance unknown: held for reconciliation
   assert.equal(row.attempts, 1);
@@ -242,7 +284,7 @@ test('dispatchRegistrationWelcomeOutbox marks max-attempt rows as failed without
     sendImpl: async () => { sendCalls++; return { success: true }; },
     maxAttempts: 5,
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 1, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 1, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal(sendCalls, 0);
   assert.equal(sb.rows.find((r) => r.id === 'a').status, 'failed');
   assert.equal(sb.rows.find((r) => r.id === 'a').last_error, 'max_attempts_reached');
@@ -253,7 +295,7 @@ test('dispatchRegistrationWelcomeOutbox never marks a simulated send as sent', a
   const sb = mockSupabase([{ id: 'a', user_id: 'u1', template: META_TEMPLATE.CUSTOMER_REGISTRATION, status: 'pending', payload }]);
   // default sender = real connector, which simulates under NODE_ENV=test
   const summary = await dispatchRegistrationWelcomeOutbox(sb);
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0, capped: 0 });
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'pending');
   assert.equal(row.attempts, 0); // a simulated attempt is not burned
@@ -266,7 +308,7 @@ test('dispatchRegistrationWelcomeOutbox counts a missing-credentials skip withou
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => ({ success: false, skipped: 'missing_credentials' }),
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0, capped: 0 });
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'pending');
   assert.equal(row.last_error, 'missing_credentials');
@@ -311,7 +353,7 @@ test('dispatchRegistrationWelcomeOutbox without supabase reports an error, not z
 test('dispatchRegistrationWelcomeOutbox on a genuinely empty queue returns zeros with no error', async () => {
   const sb = mockSupabase([]);
   const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => ({ success: true }) });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal('error' in summary, false);
 });
 
@@ -328,7 +370,7 @@ test('dispatch skips and never sends when consent was withdrawn while queued', a
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => { sends++; return { success: true }; },
   });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0, capped: 0 });
   assert.equal(sends, 0);
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'skipped');
@@ -397,10 +439,10 @@ test('dispatch claims rows so a concurrent dispatcher never double-sends', async
   const runA = dispatchRegistrationWelcomeOutbox(sb, { sendImpl: blockingSend });
   await startedPromise; // A has claimed the row and is inside the send
   const summaryB = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
-  assert.deepEqual(summaryB, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 }, 'concurrent run sees no claimable rows');
+  assert.deepEqual(summaryB, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 0 }, 'concurrent run sees no claimable rows');
   release();
   const summaryA = await runA;
-  assert.deepEqual(summaryA, { accepted: 1, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summaryA, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal(sends, 1, 'exactly one send happened for one queued row');
   assert.equal(sb.rows.find((r) => r.id === 'r-race').status, 'accepted');
 });
@@ -411,7 +453,7 @@ test('dispatch HOLDS orphaned sending claims older than 10 minutes (crashed work
   ]);
   let sends = 0;
   const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal(sends, 0, 'a stale claim is never automatically resent');
   const row = sb.rows.find((r) => r.id === 'r-stale');
   assert.equal(row.status, 'uncertain');
@@ -424,7 +466,7 @@ test('dispatch leaves fresh sending claims untouched', async () => {
   ]);
   let sends = 0;
   const summary = await dispatchRegistrationWelcomeOutbox(sb, { sendImpl: async () => { sends++; return { success: true }; } });
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0 });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
   assert.equal(sends, 0);
   assert.equal(sb.rows.find((r) => r.id === 'r-live').status, 'sending');
 });
@@ -449,4 +491,118 @@ test('accepted send with failed status persistence never returns the row to pend
   assert.equal(summary.accepted, 1, 'Meta accepted the message');
   const row = sb.rows.find((r) => r.id === 'a');
   assert.equal(row.status, 'sending', 'row stays claimed; the stale sweep later holds it as uncertain - it can never return to pending and be resent automatically');
+});
+
+// --- Budget caps: atomic reservation (message volume, never rupees) --------
+// Semantics mirror supabase/registration_welcome_budget.sql: reserve BEFORE
+// claim; KEPT on accepted AND uncertain (a held, possibly-real send consumes
+// budget); RELEASED only when Meta was definitely never reached (claim lost,
+// simulated, not-attempted incl. validation failures). Over-cap or reserve
+// error fails closed: no sends, row stays pending, no attempt burned.
+
+const CAP_PENDING = {
+  id: 'cap-pending',
+  user_id: 'u-customer',
+  template: META_TEMPLATE.CUSTOMER_REGISTRATION,
+  payload: DISPATCH_PAYLOAD,
+  status: 'pending',
+  created_at: new Date().toISOString(),
+};
+
+test('dispatch stops when the atomic reservation is denied (cap reached); row stays pending, no attempt burned', async () => {
+  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 3 } });
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => { sends++; return { success: true }; },
+  });
+  assert.equal(sends, 0, 'nothing is sent once the daily cap is reached');
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 1 });
+  const row = sb.rows.find((r) => r.id === 'cap-pending');
+  assert.equal(row.status, 'pending', 'capped row stays pending for a later run');
+  assert.equal(row.attempts, 0, 'capped row burns no attempt');
+  assert.equal(sb.budget.daily_used, 3, 'denied reservation consumes nothing');
+});
+
+test('dispatch fails closed (no sends) when the reservation RPC errors', async () => {
+  const sb = mockSupabase([CAP_PENDING], 'auto', { rpcError: true });
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => { sends++; return { success: true }; },
+  });
+  assert.equal(sends, 0, 'reserve error means no sends this run');
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 1 });
+  assert.equal(sb.rows.find((r) => r.id === 'cap-pending').status, 'pending');
+});
+
+test('accepted send KEEPS the reservation (consumes budget)', async () => {
+  const sb = mockSupabase([CAP_PENDING]);
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: true }),
+  });
+  assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
+  assert.equal(sb.budget.daily_used, 1, 'an accepted send consumes its slot');
+  assert.equal(sb.budget.total_used, 1);
+});
+
+test('uncertain outcome KEEPS the reservation (held, possibly-real send consumes budget)', async () => {
+  const sb = mockSupabase([CAP_PENDING]);
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: false, error: 'network_dropped_after_request' }),
+  });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 1, capped: 0 });
+  assert.equal(sb.budget.daily_used, 1, 'a held uncertain attempt keeps its slot');
+  assert.equal(sb.rows.find((r) => r.id === 'cap-pending').status, 'uncertain');
+});
+
+test('synchronous Meta rejection (HTTP error response) KEEPS the reservation - a real request spent the attempt', async () => {
+  const sb = mockSupabase([CAP_PENDING]);
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: false, status: 400, error: '(#132000) template parameter mismatch' }),
+  });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 1, capped: 0 });
+  assert.equal(sb.budget.daily_used, 1, 'a synchronous rejection still consumes the slot - the request reached Meta');
+  assert.equal(sb.budget.total_used, 1);
+  assert.equal(sb.rows.find((r) => r.id === 'cap-pending').status, 'uncertain');
+});
+
+test('not-attempted outcome RELEASES the reservation (Meta never reached)', async () => {
+  const sb = mockSupabase([CAP_PENDING]);
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: false, skipped: 'missing_credentials' }),
+  });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0, capped: 0 });
+  assert.equal(sb.budget.daily_used, 0, 'slot returned: nothing was sent');
+  assert.equal(sb.rows.find((r) => r.id === 'cap-pending').status, 'pending');
+});
+
+test('validation failure RELEASES the reservation and marks the row failed', async () => {
+  const sb = mockSupabase([CAP_PENDING]);
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: false, error: 'validation_failed: bad template' }),
+  });
+  assert.deepEqual(summary, { accepted: 0, failed: 1, skipped: 0, uncertain: 0, capped: 0 });
+  assert.equal(sb.budget.daily_used, 0, 'slot returned: Meta was never reached');
+});
+
+test('reservation under both caps still sends normally', async () => {
+  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 2, total_used: 2 } });
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: true }),
+  });
+  assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
+  assert.deepEqual(
+    { daily: sb.budget.daily_used, total: sb.budget.total_used },
+    { daily: 3, total: 3 },
+    'the last available slot is taken exactly once'
+  );
+});
+
+test('reservation denied when the ALL-IN cap is reached even with daily room', async () => {
+  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 0, total_used: 3 } });
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => { sends++; return { success: true }; },
+  });
+  assert.equal(sends, 0);
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 1 });
 });

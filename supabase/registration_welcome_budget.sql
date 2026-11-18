@@ -1,0 +1,168 @@
+-- DRAFT migration for review - NOT applied to any environment.
+-- Atomic send-budget reservation for the registration welcome dispatcher.
+--
+-- WHY THIS EXISTS (revised 18 Nov 2026, second review round; pilot plan
+--   numbers and hard pilot expiry added 18 Nov, third round):
+--   Budget caps must be GENUINELY ATOMIC across every dispatcher invocation
+--   (the 5-minute cron, a manual POST, overlapping runs). A count-then-claim
+--   check races: two invocations can both observe "under cap" and both send.
+--   This file replaces counting with a single-row counter that is
+--   conditionally incremented in ONE UPDATE. PostgreSQL row locking
+--   serializes concurrent UPDATEs on that row, so exactly one invocation
+--   can take the last available slot - the reservation itself is the lock.
+--
+-- WHAT THE CAPS MEAN (unchanged position, stated again here):
+--   These are message VOLUME caps, never rupees. Meta charges per DELIVERED
+--   message plus applicable tax (base Rs0.115/Utility verified, tax
+--   unverified), so no counter bounds money. The rupee bound is the prepaid
+--   balance, which only the owner funds - a separate owner decision.
+--
+-- RESERVATION SEMANTICS (implemented in src/lib/registration-outbox.js):
+--   - reserve_welcome_send() runs BEFORE a row is claimed. It returns true
+--     only if the row was atomically incremented under both caps.
+--   - The reservation is KEPT for every REAL Meta request: accepted,
+--     synchronous rejection (HTTP error response), and network-ambiguous
+--     'uncertain' (Meta may have accepted it). The owner-approved cap
+--     counts ATTEMPTS, not accepted messages: any of these spent one,
+--     so the slot stays consumed (retries-plus-uncertains cannot ratchet
+--     spend past the cap).
+--   - The reservation is RELEASED (release_welcome_send) only when Meta was
+--     definitely never reached: claim lost to a concurrent run, simulated
+--     send, or a not-attempted outcome (missing credentials, payload
+--     validation). Those cost nothing, so they must not consume budget.
+--   - KNOWN CONSERVATIVE LEAK: if the worker crashes after reserving but
+--     before the outcome is persisted, that slot stays consumed. Leaks only
+--     ever REDUCE what can be sent (never increase), so the failure
+--     direction is safe; the owner can reset the row if needed.
+--   - Day boundary: daily_used resets lazily inside the same atomic UPDATE
+--     when the IST day changes (Asia/Kolkata, UTC+5:30, no DST).
+--
+-- CAP NUMBERS (owner-approved PILOT PLAN, 18 Nov 2026): 3 attempts per IST
+--   day and 3 attempts all-in, for a 2-day pilot. The owner approved these
+--   numbers as the plan ("3 attempt only for 2 days", "Total 3 attempts in
+--   2 days"); ACTIVATION itself is still a separate pending approval and
+--   nothing is live. When either cap is reached, dispatch STOPS and queued
+--   rows wait for owner review: nothing else sends until the owner raises
+--   a cap with one UPDATE on this row (no code or env change needed):
+--     update public.notification_dispatch_budget
+--       set daily_cap = <N>, total_cap = <M> where id = 1;
+--   The daily reset NEVER replenishes the aggregate: total_used only ever
+--   grows (released slots excepted) and the all-in cap binds across day
+--   boundaries, so at most 3 sends can happen across the whole pilot.
+--
+-- HARD PILOT EXPIRY (prepared here, armed only at activation):
+--   expires_at starts NULL, and reserve_welcome_send() DENIES every
+--   reservation while it is NULL (fail closed: unarmed = unsendable).
+--   At activation the owner-approved step arms it:
+--     update public.notification_dispatch_budget
+--       set armed_at = now(), expires_at = now() + interval '2 days'
+--     where id = 1;
+--   armed_at is also the AUDIENCE CUTOFF used by the confirmed-email
+--   gating trigger (registration_welcome_confirmed_email_gating.sql):
+--   only accounts registered at or after armed_at can be queued, so an
+--   old account that confirms its email later is never messaged, and
+--   nothing queues after expiry either.
+--   Once expires_at passes, every reservation is denied - the hard stop
+--   lives in the reservation layer, so it covers the cron, manual POSTs
+--   and any other caller. pg_cron has no end-date support, so the job
+--   keeps firing after expiry but every run is denied at reserve; the
+--   activation checklist (schedule SQL) lists unscheduling it as cleanup.
+--   "Whichever comes first": the all-in cap (3) or the 2-day expiry ends
+--   the pilot; either way dispatch stops for owner review.
+--
+-- REVERSAL (full):
+--   drop function if exists public.release_welcome_send();
+--   drop function if exists public.reserve_welcome_send();
+--   drop table if exists public.notification_dispatch_budget;
+--   The dispatcher fails CLOSED without the functions (no sends).
+
+create table if not exists public.notification_dispatch_budget (
+  id smallint primary key default 1 check (id = 1),
+  day_key date not null default ((now() at time zone 'Asia/Kolkata')::date),
+  daily_used integer not null default 0 check (daily_used >= 0),
+  total_used integer not null default 0 check (total_used >= 0),
+  daily_cap integer not null default 3 check (daily_cap >= 0),
+  total_cap integer not null default 3 check (total_cap >= 0),
+  -- Hard pilot expiry: NULL until armed at activation; reserve denies
+  -- while NULL or past. Set to activation time + 2 days at activation.
+  expires_at timestamptz,
+  -- Pilot arming moment: also the audience cutoff for the gating
+  -- trigger (only accounts created at/after armed_at can be queued).
+  armed_at timestamptz,
+  updated_at timestamptz not null default now()
+);
+
+insert into public.notification_dispatch_budget (id)
+values (1)
+on conflict (id) do nothing;
+
+alter table public.notification_dispatch_budget enable row level security;
+
+-- Only the service role (server) touches the budget; no client access.
+-- Same convention as public.notification_outbox.
+create policy "service role full access"
+  on public.notification_dispatch_budget
+  for all
+  to service_role
+  using (true)
+  with check (true);
+
+-- Atomically take one send slot under both caps and inside the armed
+-- pilot window. Returns
+--   {"taken": true, "day": <IST date reserved against>}  when a slot was
+--   taken, or {"taken": false} when a cap is reached OR the pilot is not
+--   armed (expires_at NULL) or has expired. The day is returned
+--   so a later release can target the SAME day's counter (see below).
+-- Concurrent callers serialize on the single row's lock; the loser of the
+-- race for the LAST slot gets taken=false.
+create or replace function public.reserve_welcome_send() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_today date := (now() at time zone 'Asia/Kolkata')::date;
+  v_taken integer;
+begin
+  update public.notification_dispatch_budget
+     set daily_used = case when day_key = v_today then daily_used + 1 else 1 end,
+         day_key = v_today,
+         total_used = total_used + 1,
+         updated_at = now()
+   where id = 1
+     and expires_at is not null
+     and now() < expires_at
+     and total_used < total_cap
+     and (day_key <> v_today or daily_used < daily_cap);
+  get diagnostics v_taken = row_count;
+  if v_taken > 0 then
+    return jsonb_build_object('taken', true, 'day', v_today);
+  end if;
+  return jsonb_build_object('taken', false);
+end; $$;
+
+-- Give one slot back when Meta was definitely never reached. Never drops
+-- below zero (defensive against double-release after a crash/retry mixup).
+-- p_day is the day the reservation was taken against (from the reserve
+-- result). total_used always gives the slot back; daily_used is decremented
+-- ONLY when that same day is still the current budget day - so a release
+-- landing after midnight never eats into the NEW day's allowance.
+create or replace function public.release_welcome_send(p_day date) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  update public.notification_dispatch_budget
+     set total_used = greatest(total_used - 1, 0),
+         daily_used = case when day_key = p_day
+                           then greatest(daily_used - 1, 0)
+                           else daily_used end,
+         updated_at = now()
+   where id = 1;
+end; $$;
+
+-- ACCESS CONTROL (verified offline against PostgreSQL 16, 18 Nov):
+--   PostgreSQL grants EXECUTE on new functions to PUBLIC by default - left
+--   alone, anon/authenticated (and anyone with database access) could call
+--   reserve/release and rewrite the budget. Close that explicitly; only the
+--   service role (server) may call them. Direct table access is already
+--   blocked for non-owners by RLS above (no policy for anon/authenticated).
+revoke all on function public.reserve_welcome_send() from public, anon, authenticated;
+revoke all on function public.release_welcome_send(date) from public, anon, authenticated;
+grant execute on function public.reserve_welcome_send() to service_role;
+grant execute on function public.release_welcome_send(date) to service_role;
