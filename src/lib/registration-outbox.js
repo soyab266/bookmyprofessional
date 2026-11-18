@@ -12,7 +12,7 @@ import {
   buildProfessionalRegistrationReceived,
 } from './meta-whatsapp-templates.js';
 import { sendMetaTemplateMessage, classifySendOutcome } from './meta-whatsapp.js';
-import { isMetaTrackingEnabled } from './meta-tracking.js';
+import { isMetaTrackingEnabled, reconcileStagedStatusEvents } from './meta-tracking.js';
 
 export const OUTBOX_TABLE = 'notification_outbox';
 
@@ -293,6 +293,16 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
         }
       }
       await updateOutbox(supabase, row.id, acceptedUpdate);
+      // Reconcile any status events that arrived before this row carried the
+      // wamid (webhook/acceptance race): they were staged durably, not lost.
+      // Best-effort and logged; never changes the acceptance outcome.
+      if (isMetaTrackingEnabled() && result.metaMessageId) {
+        try {
+          await reconcileStagedStatusEvents(supabase, result.metaMessageId);
+        } catch (err) {
+          console.error('[MetaTracking] reconcile exception:', err?.message || err);
+        }
+      }
       accepted++;
     } else {
       const outcome = classifySendOutcome(result);
