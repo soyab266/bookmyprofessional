@@ -1,7 +1,8 @@
 -- DRAFT migration for review - NOT applied to any environment.
 -- Atomic send-budget reservation for the registration welcome dispatcher.
 --
--- WHY THIS EXISTS (revised 18 Nov 2026, second review round):
+-- WHY THIS EXISTS (revised 18 Nov 2026, second review round; pilot plan
+--   numbers and hard pilot expiry added 18 Nov, third round):
 --   Budget caps must be GENUINELY ATOMIC across every dispatcher invocation
 --   (the 5-minute cron, a manual POST, overlapping runs). A count-then-claim
 --   check races: two invocations can both observe "under cap" and both send.
@@ -34,13 +35,32 @@
 --   - Day boundary: daily_used resets lazily inside the same atomic UPDATE
 --     when the IST day changes (Asia/Kolkata, UTC+5:30, no DST).
 --
--- CAP NUMBERS: seeded at the PROPOSED conservative caps 5/day and 20 all-in
---   (proposal pending owner approval 18 Nov - these are NOT approved
---   numbers). When either cap is reached, dispatch STOPS and queued rows
---   wait for owner review: nothing else sends until the owner raises a cap
---   with one UPDATE on this row (no code or env change needed):
+-- CAP NUMBERS (owner-approved PILOT PLAN, 18 Nov 2026): 3 attempts per IST
+--   day and 3 attempts all-in, for a 2-day pilot. The owner approved these
+--   numbers as the plan ("3 attempt only for 2 days", "Total 3 attempts in
+--   2 days"); ACTIVATION itself is still a separate pending approval and
+--   nothing is live. When either cap is reached, dispatch STOPS and queued
+--   rows wait for owner review: nothing else sends until the owner raises
+--   a cap with one UPDATE on this row (no code or env change needed):
 --     update public.notification_dispatch_budget
 --       set daily_cap = <N>, total_cap = <M> where id = 1;
+--   The daily reset NEVER replenishes the aggregate: total_used only ever
+--   grows (released slots excepted) and the all-in cap binds across day
+--   boundaries, so at most 3 sends can happen across the whole pilot.
+--
+-- HARD PILOT EXPIRY (prepared here, armed only at activation):
+--   expires_at starts NULL, and reserve_welcome_send() DENIES every
+--   reservation while it is NULL (fail closed: unarmed = unsendable).
+--   At activation the owner-approved step arms it:
+--     update public.notification_dispatch_budget
+--       set expires_at = now() + interval '2 days' where id = 1;
+--   Once expires_at passes, every reservation is denied - the hard stop
+--   lives in the reservation layer, so it covers the cron, manual POSTs
+--   and any other caller. pg_cron has no end-date support, so the job
+--   keeps firing after expiry but every run is denied at reserve; the
+--   activation checklist (schedule SQL) lists unscheduling it as cleanup.
+--   "Whichever comes first": the all-in cap (3) or the 2-day expiry ends
+--   the pilot; either way dispatch stops for owner review.
 --
 -- REVERSAL (full):
 --   drop function if exists public.release_welcome_send();
@@ -53,8 +73,11 @@ create table if not exists public.notification_dispatch_budget (
   day_key date not null default ((now() at time zone 'Asia/Kolkata')::date),
   daily_used integer not null default 0 check (daily_used >= 0),
   total_used integer not null default 0 check (total_used >= 0),
-  daily_cap integer not null default 5 check (daily_cap >= 0),
-  total_cap integer not null default 20 check (total_cap >= 0),
+  daily_cap integer not null default 3 check (daily_cap >= 0),
+  total_cap integer not null default 3 check (total_cap >= 0),
+  -- Hard pilot expiry: NULL until armed at activation; reserve denies
+  -- while NULL or past. Set to activation time + 2 days at activation.
+  expires_at timestamptz,
   updated_at timestamptz not null default now()
 );
 
@@ -73,9 +96,11 @@ create policy "service role full access"
   using (true)
   with check (true);
 
--- Atomically take one send slot under both caps. Returns
+-- Atomically take one send slot under both caps and inside the armed
+-- pilot window. Returns
 --   {"taken": true, "day": <IST date reserved against>}  when a slot was
---   taken, or {"taken": false} when a cap is reached. The day is returned
+--   taken, or {"taken": false} when a cap is reached OR the pilot is not
+--   armed (expires_at NULL) or has expired. The day is returned
 --   so a later release can target the SAME day's counter (see below).
 -- Concurrent callers serialize on the single row's lock; the loser of the
 -- race for the LAST slot gets taken=false.
@@ -91,6 +116,8 @@ begin
          total_used = total_used + 1,
          updated_at = now()
    where id = 1
+     and expires_at is not null
+     and now() < expires_at
      and total_used < total_cap
      and (day_key <> v_today or daily_used < daily_cap);
   get diagnostics v_taken = row_count;
