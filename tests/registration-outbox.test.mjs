@@ -554,6 +554,17 @@ test('uncertain outcome KEEPS the reservation (held, possibly-real send consumes
   assert.equal(sb.rows.find((r) => r.id === 'cap-pending').status, 'uncertain');
 });
 
+test('synchronous Meta rejection (HTTP error response) KEEPS the reservation - a real request spent the attempt', async () => {
+  const sb = mockSupabase([CAP_PENDING]);
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: false, status: 400, error: '(#132000) template parameter mismatch' }),
+  });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 1, capped: 0 });
+  assert.equal(sb.budget.daily_used, 1, 'a synchronous rejection still consumes the slot - the request reached Meta');
+  assert.equal(sb.budget.total_used, 1);
+  assert.equal(sb.rows.find((r) => r.id === 'cap-pending').status, 'uncertain');
+});
+
 test('not-attempted outcome RELEASES the reservation (Meta never reached)', async () => {
   const sb = mockSupabase([CAP_PENDING]);
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
