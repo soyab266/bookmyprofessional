@@ -49,10 +49,20 @@
 --     was definitely never reached (claim lost, simulated, not-attempted).
 --   - A worker crash between reserve and persist leaks one slot; leaks only
 --     ever REDUCE future sends (safe direction), owner can reset the row.
---   - Cap numbers live in the budget row (seeded at the PROPOSED 5/day IST,
---     20 all-in, pending owner approval - NOT approved numbers). Reaching a
---     cap stops dispatch for owner review; the owner changes them with one
+--   - Cap numbers live in the budget row: 3/day IST and 3 all-in - the
+--     owner-approved pilot plan of 18 Nov ("Total 3 attempts in 2 days");
+--     activation itself remains a separate pending approval. The daily
+--     reset never replenishes the all-in cap. Reaching a cap stops
+--     dispatch for owner review; the owner changes them with one
 --     UPDATE - no code or env change.
+--   - HARD PILOT EXPIRY: the same budget row carries expires_at (NULL =
+--     unarmed; reserve denies every send while NULL). At activation it is
+--     set to the activation moment + 2 days; after it passes every
+--     reservation is denied, whichever caller asks. pg_cron has no
+--     end-date support, so the job keeps firing after expiry but each
+--     run is denied at reserve; unscheduling at pilot end is cleanup in
+--     the checklist below. Cap reached OR expiry passed - whichever
+--     first - ends the pilot for owner review.
 --   - Reserve denied or error fails CLOSED: rows stay pending, burn no
 --     attempt, and are retried by a later run.
 --   Earlier drafts (a cron-side WHERE count, then a per-claim count) were
@@ -128,10 +138,13 @@ create extension if not exists pg_net;
 -- );
 
 -- ACTIVATION CHECKLIST (each step owner-approved at activation, none done now):
---   1. Apply registration_welcome_budget.sql, then confirm or change cap
---      numbers with one UPDATE on the budget row (seeded at the proposed
---      5/day, 20 all-in, pending approval). Decide the prepaid funding
---      level separately - that is the actual rupee bound.
+--   1. Apply registration_welcome_budget.sql (caps seeded at the approved
+--      pilot plan 3/day, 3 all-in), then ARM the hard expiry:
+--        update public.notification_dispatch_budget
+--          set expires_at = now() + interval '2 days' where id = 1;
+--      Until that UPDATE runs, reserve denies every send (fail closed).
+--      Decide the prepaid funding level separately - that is the actual
+--      rupee bound.
 --   2. Save INTERNAL_SECRET as Vault secret 'bmp_internal_secret' via the
 --      dashboard Secrets UI + vault-fill flow described above.
 --   3. Review existing notification_outbox rows; mark anything that must not
@@ -144,3 +157,7 @@ create extension if not exists pg_net;
 --      --   from net._http_response order by created desc limit 5;
 --      -- outbox rows should leave 'pending' (accepted / skipped / held
 --      -- uncertain), and the route returns a capped count once caps bite.
+--   6. Pilot end (all-in cap of 3 reached OR expires_at passed - reserve
+--      denies either way, so nothing more can send): unschedule the job
+--      (select cron.unschedule('registration-welcome-dispatch');) and
+--      review results with the owner before any further approval.
