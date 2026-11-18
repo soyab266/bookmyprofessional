@@ -20,10 +20,12 @@
 -- RESERVATION SEMANTICS (implemented in src/lib/registration-outbox.js):
 --   - reserve_welcome_send() runs BEFORE a row is claimed. It returns true
 --     only if the row was atomically incremented under both caps.
---   - The reservation is KEPT when Meta accepted the message AND when the
---     outcome is 'uncertain' (Meta may have accepted it - a held, possibly
---     real send; it must consume budget so retries-plus-uncertains cannot
---     ratchet spend past the cap).
+--   - The reservation is KEPT for every REAL Meta request: accepted,
+--     synchronous rejection (HTTP error response), and network-ambiguous
+--     'uncertain' (Meta may have accepted it). The owner-approved cap
+--     counts ATTEMPTS, not accepted messages: any of these spent one,
+--     so the slot stays consumed (retries-plus-uncertains cannot ratchet
+--     spend past the cap).
 --   - The reservation is RELEASED (release_welcome_send) only when Meta was
 --     definitely never reached: claim lost to a concurrent run, simulated
 --     send, or a not-attempted outcome (missing credentials, payload
