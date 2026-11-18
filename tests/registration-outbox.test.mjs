@@ -21,7 +21,11 @@ function mockSupabase(initialRows = [], profiles = 'auto', opts = {}) {
   let inserted = 0;
   // In-memory mirror of the single-row budget counter the reserve/release
   // RPCs maintain in production (supabase/registration_welcome_budget.sql).
-  const budget = { daily_used: 0, total_used: 0, daily_cap: 5, total_cap: 20, ...(opts.budget || {}) };
+  // Defaults mirror the seeded owner-approved pilot plan (3/day, 3 all-in).
+  // The SQL's hard pilot expiry (expires_at NULL or past) reaches this
+  // layer as the same { taken: false } denial as a reached cap, so the
+  // denial tests below also cover the dispatcher's response to expiry.
+  const budget = { daily_used: 0, total_used: 0, daily_cap: 3, total_cap: 3, ...(opts.budget || {}) };
 
   function applyFilters(data, filters) {
     return data.filter((row) =>
@@ -506,7 +510,7 @@ const CAP_PENDING = {
 };
 
 test('dispatch stops when the atomic reservation is denied (cap reached); row stays pending, no attempt burned', async () => {
-  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 5 } });
+  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 3 } });
   let sends = 0;
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => { sends++; return { success: true }; },
@@ -516,7 +520,7 @@ test('dispatch stops when the atomic reservation is denied (cap reached); row st
   const row = sb.rows.find((r) => r.id === 'cap-pending');
   assert.equal(row.status, 'pending', 'capped row stays pending for a later run');
   assert.equal(row.attempts, 0, 'capped row burns no attempt');
-  assert.equal(sb.budget.daily_used, 5, 'denied reservation consumes nothing');
+  assert.equal(sb.budget.daily_used, 3, 'denied reservation consumes nothing');
 });
 
 test('dispatch fails closed (no sends) when the reservation RPC errors', async () => {
@@ -570,20 +574,20 @@ test('validation failure RELEASES the reservation and marks the row failed', asy
 });
 
 test('reservation under both caps still sends normally', async () => {
-  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 4, total_used: 19 } });
+  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 2, total_used: 2 } });
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => ({ success: true }),
   });
   assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
   assert.deepEqual(
     { daily: sb.budget.daily_used, total: sb.budget.total_used },
-    { daily: 5, total: 20 },
+    { daily: 3, total: 3 },
     'the last available slot is taken exactly once'
   );
 });
 
 test('reservation denied when the ALL-IN cap is reached even with daily room', async () => {
-  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 0, total_used: 20 } });
+  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 0, total_used: 3 } });
   let sends = 0;
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => { sends++; return { success: true }; },
