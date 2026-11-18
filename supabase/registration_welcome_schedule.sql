@@ -1,0 +1,82 @@
+-- DRAFT migration for review - NOT applied to any environment.
+-- Registration welcome dispatch schedule: calls the already-deployed
+-- dispatcher route every 5 minutes through Supabase Cron (pg_cron + pg_net),
+-- authenticating with a secret held in Supabase Vault (never in this repo,
+-- never in chat, never in a readable cron job definition).
+--
+-- Why this design (reviewed 18 Nov 2026):
+--   - The Vercel team is on the Hobby plan. Vercel's own docs state Hobby
+--     cron jobs can run only ONCE PER DAY (more frequent expressions fail
+--     deployment) and fire as HTTP GET with an Authorization: Bearer
+--     CRON_SECRET header - a poor fit for a welcome message and for the
+--     existing POST + X-Internal-Secret route.
+--     Source: https://vercel.com/docs/cron-jobs/manage-cron-jobs
+--   - Verified live on the production project (18 Nov): supabase_vault 0.3.1
+--     is ALREADY INSTALLED; pg_cron 1.6.4 and pg_net 0.20.4 are available
+--     (not yet enabled). The dispatcher route
+--     /api/notifications/registration-welcome is deployed (POST +
+--     X-Internal-Secret) and INTERNAL_SECRET exists in Vercel Production env.
+--
+-- SECRET HANDLING (no secret in any artifact):
+--   The INTERNAL_SECRET value is stored in Supabase Vault under the name
+--   'bmp_internal_secret' by the OWNER, at apply time, in their own Supabase
+--   dashboard SQL editor:
+--     select vault.create_secret(
+--       '<current INTERNAL_SECRET value>', 'bmp_internal_secret',
+--       'Dispatcher route secret for registration welcome cron');
+--   The value passes only through the owner's own dashboard (its SQL history
+--   entry can be deleted afterward). The cron job below reads it through the
+--   vault.decrypted_secrets reference - the job definition itself contains
+--   only the secret NAME. vault.decrypted_secrets is readable by database
+--   owner roles (the owner themselves), which is accepted.
+--   If INTERNAL_SECRET is ever rotated in Vercel (not part of this work),
+--   the vault secret must be updated or dispatch stops with 401s.
+--
+-- pg_net behavior relied on (Supabase docs):
+--   net.http_post is asynchronous fire-and-forget; responses land in
+--   net._http_response; there is no automatic retry and a failed call does
+--   not block or fail later cron runs. Default timeout is 2000 ms, too short
+--   for a Vercel cold start, so 30000 ms is set explicitly. A dropped or
+--   failed call degrades safely in the dispatcher: a row claimed mid-send
+--   is swept to 'uncertain' after 10 minutes and HELD (never auto-resent);
+--   pending rows are retried up to 5 attempts then marked failed. No
+--   duplicate-send or stuck-queue hazard.
+--   Source: https://supabase.com/docs/guides/database/extensions/pg_net
+--
+-- REVERSAL (full):
+--   select cron.unschedule('registration-welcome-dispatch');
+--   -- optional: delete from vault.secrets where name = 'bmp_internal_secret';
+--   -- optional: drop extension pg_net; drop extension pg_cron;
+-- Queued rows stay pending and unsent once unscheduled.
+
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+
+-- Applied verbatim at activation time (no placeholder - the secret value is
+-- resolved from Supabase Vault at run time, not stored here):
+--
+-- select cron.schedule(
+--   'registration-welcome-dispatch',
+--   '*/5 * * * *',
+--   $$
+--   select net.http_post(
+--     url := 'https://www.bookmyprofessional.com/api/notifications/registration-welcome',
+--     headers := (
+--       select jsonb_build_object(
+--         'Content-Type', 'application/json',
+--         'X-Internal-Secret', decrypted_secret
+--       )
+--       from vault.decrypted_secrets
+--       where name = 'bmp_internal_secret'
+--     ),
+--     body := '{}'::jsonb,
+--     timeout_milliseconds := 30000
+--   ) as request_id;
+--   $$
+-- );
+
+-- Verification after apply:
+--   select jobname, schedule, active from cron.job;
+--   -- after ~5 minutes: select status, error_msg, status_code
+--   --   from net._http_response order by created desc limit 5;
+--   -- outbox rows should leave 'pending' (accepted / skipped / held uncertain).
