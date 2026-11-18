@@ -173,21 +173,29 @@ const STALE_CLAIM_MS = 10 * 60 * 1000;
 // activation; seeded 25/day IST, 500 all-in). A reserve failure or error
 // fails CLOSED (no sends this run); the row stays pending for a later run.
 
-// Returns true (slot taken), false (over cap), or null (error - fail closed).
+// Returns { taken: true, day } when a slot was taken (day is the IST budget
+// day the slot counts against, echoed back for a later same-day release),
+// { taken: false } when a cap is reached, or { taken: false, error: true }
+// when the reserve itself failed - the caller fails closed on either.
 async function reserveSendSlot(supabase) {
   try {
     const { data, error } = await supabase.rpc('reserve_welcome_send');
-    if (error) return null;
-    return data === true;
+    if (error) return { taken: false, error: true };
+    if (data && data.taken === true) return { taken: true, day: data.day || null };
+    return { taken: false };
   } catch {
-    return null;
+    return { taken: false, error: true };
   }
 }
 
 // Best-effort release; only called when Meta was definitely never reached.
-async function releaseSendSlot(supabase) {
+// day comes from the reserve result, so a release landing after midnight
+// never eats the NEW day's allowance (the SQL decrements the daily counter
+// only when it still belongs to that day). A null day degrades to
+// total-only release - under-counting capacity, never over-spending.
+async function releaseSendSlot(supabase, day) {
   try {
-    await supabase.rpc('release_welcome_send');
+    await supabase.rpc('release_welcome_send', { p_day: day || null });
   } catch {
     // A lost release only ever under-counts future spend capacity; safe.
   }
@@ -306,8 +314,8 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
     // are never dropped; rows are oldest-first, so once a cap bites every
     // later row is over it too - stop the run. Over-cap (false) and reserve
     // error (null) both fail closed: no sends.
-    const reserved = await reserveSendSlot(supabase);
-    if (reserved !== true) {
+    const reservation = await reserveSendSlot(supabase);
+    if (!reservation.taken) {
       capped = rows.length - (accepted + failed + skipped + uncertain);
       break;
     }
@@ -317,7 +325,7 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
     // reservation is released: nothing was sent, so nothing may be counted.
     const claimed = await claimOutboxRow(supabase, row.id);
     if (!claimed) {
-      await releaseSendSlot(supabase);
+      await releaseSendSlot(supabase, reservation.day);
       skipped++;
       continue;
     }
@@ -327,7 +335,7 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
       // A simulated send is not a delivery: never mark the row sent, never
       // burn an attempt, and release the budget slot - Meta was never
       // reached. Release the claim back to pending.
-      await releaseSendSlot(supabase);
+      await releaseSendSlot(supabase, reservation.day);
       await updateOutbox(supabase, row.id, { status: 'pending', last_error: 'simulated_not_sent' });
       skipped++;
     } else if (result?.success) {
@@ -350,7 +358,7 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
       if (outcome === 'not_attempted' && !String(err).startsWith('validation_failed')) {
         // Never reached Meta (e.g. missing credentials): safe to retry later,
         // and the budget slot goes back - nothing was sent.
-        await releaseSendSlot(supabase);
+        await releaseSendSlot(supabase, reservation.day);
         await updateOutbox(supabase, row.id, {
           status: 'pending',
           attempts: (row.attempts ?? 0) + 1,
@@ -360,7 +368,7 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
       } else if (outcome === 'not_attempted') {
         // Validation failure: permanent payload bug, retrying never helps.
         // Meta was never reached, so the budget slot goes back.
-        await releaseSendSlot(supabase);
+        await releaseSendSlot(supabase, reservation.day);
         await updateOutbox(supabase, row.id, {
           status: 'failed',
           attempts: (row.attempts ?? 0) + 1,
