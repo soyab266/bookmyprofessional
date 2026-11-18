@@ -48,6 +48,14 @@
 --   against PostgreSQL 16 on 18 Nov (see PR discussion).
 --
 -- SUPPORTED SIGNUP AUDIENCE (precise):
+--   - PILOT CUTOFF (owner-approved audience, 18 Nov: "New customer and
+--     professional registrations only - no messages to old accounts"): the
+--     function queues ONLY while the pilot is armed and unexpired, and
+--     ONLY for accounts whose auth.users.created_at is at or after the
+--     budget row's armed_at. An OLD account that confirms its email after
+--     activation is therefore excluded even though the confirmation
+--     transition fires this trigger. Unarmed (armed_at NULL) or expired
+--     pilot: queues nothing - fail closed, matching the reserve side.
 --   - Email+password registrations (app UI OR direct signUp API call) that
 --     go on to confirm their email: welcome queued at confirmation, if the
 --     profile then has whatsapp_consent=true and a phone.
@@ -102,6 +110,19 @@ begin
     return new;
   end if;
   if TG_OP = 'UPDATE' and old.email_confirmed_at is not null then
+    return new;
+  end if;
+
+  -- Pilot audience cutoff (see header): only while armed and unexpired,
+  -- and only accounts registered at or after arming. One row read on the
+  -- single-row budget table; fail closed in every other state.
+  perform 1 from public.notification_dispatch_budget
+   where id = 1
+     and armed_at is not null
+     and expires_at is not null
+     and now() < expires_at
+     and new.created_at >= armed_at;
+  if not found then
     return new;
   end if;
 
