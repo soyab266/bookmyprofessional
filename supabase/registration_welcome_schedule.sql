@@ -49,8 +49,10 @@
 --     was definitely never reached (claim lost, simulated, not-attempted).
 --   - A worker crash between reserve and persist leaks one slot; leaks only
 --     ever REDUCE future sends (safe direction), owner can reset the row.
---   - Cap numbers live in the budget row (seeded 25/day IST, 500 all-in);
---     the owner changes them with one UPDATE - no code or env change.
+--   - Cap numbers live in the budget row (seeded at the PROPOSED 5/day IST,
+--     20 all-in, pending owner approval - NOT approved numbers). Reaching a
+--     cap stops dispatch for owner review; the owner changes them with one
+--     UPDATE - no code or env change.
 --   - Reserve denied or error fails CLOSED: rows stay pending, burn no
 --     attempt, and are retried by a later run.
 --   Earlier drafts (a cron-side WHERE count, then a per-claim count) were
@@ -126,9 +128,10 @@ create extension if not exists pg_net;
 -- );
 
 -- ACTIVATION CHECKLIST (each step owner-approved at activation, none done now):
---   1. Apply registration_welcome_budget.sql, then choose cap numbers with
---      one UPDATE on the budget row (seeded 25/day, 500 all-in). Decide the
---      prepaid funding level separately - that is the actual rupee bound.
+--   1. Apply registration_welcome_budget.sql, then confirm or change cap
+--      numbers with one UPDATE on the budget row (seeded at the proposed
+--      5/day, 20 all-in, pending approval). Decide the prepaid funding
+--      level separately - that is the actual rupee bound.
 --   2. Save INTERNAL_SECRET as Vault secret 'bmp_internal_secret' via the
 --      dashboard Secrets UI + vault-fill flow described above.
 --   3. Review existing notification_outbox rows; mark anything that must not
