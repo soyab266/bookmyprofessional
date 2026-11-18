@@ -63,10 +63,12 @@
 --
 -- WHAT THIS DOES NOT FIX (stated honestly):
 --   The PHONE number itself remains unverified - a confirmed-email user can
---   still register with someone else's phone. Closing that needs a phone-OTP
+--   still register with someone else's phone. Email confirmation only adds
+--   an ACCOUNT BARRIER (a confirmed email behind the send); it does NOT
+--   eliminate arbitrary-number abuse. Closing that needs a phone-OTP
 --   flow (e.g. WhatsApp OTP via Meta, or Supabase Phone auth), which is a
 --   separate, larger product decision. Until then the residual exposure is
---   bounded by the dispatcher volume caps (25/day, 500 all-in by default)
+--   bounded by the dispatcher volume caps (proposed 5/day, 20 all-in)
 --   and the prepaid balance, and Meta-side abuse signals (blocks/reports)
 --   should be watched after activation.
 --   Accounts that never confirm their email never get the welcome message.
