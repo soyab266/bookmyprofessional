@@ -165,8 +165,12 @@ create extension if not exists pg_net;
 --      (queues on future email confirmations only; nothing retroactive),
 --      then ARM the 48-hour window:
 --        update public.notification_dispatch_budget
---          set expires_at = now() + interval '2 days' where id = 1;
---      The pilot clock starts at this UPDATE, not before.
+--          set armed_at = now(), expires_at = now() + interval '2 days'
+--        where id = 1;
+--      The pilot clock starts at this UPDATE, not before. armed_at is
+--      also the audience cutoff: the gating trigger queues only accounts
+--      registered at or after it, so old accounts that confirm their
+--      email later are never messaged.
 --   7. PILOT END (all-in cap of 3 reached OR expires_at passed - reserve
 --      denies either way, so nothing more can send): unschedule the job
 --      (select cron.unschedule('registration-welcome-dispatch');) and
