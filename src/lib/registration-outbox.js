@@ -170,7 +170,8 @@ const STALE_CLAIM_MS = 10 * 60 * 1000;
 // owner funds; funding level is a separate owner decision.
 //
 // Cap numbers live in the budget row (owner updates them with one UPDATE at
-// activation; seeded 25/day IST, 500 all-in). A reserve failure or error
+// activation; seeded at the proposed 5/day IST, 20 all-in, pending owner
+// approval). A reserve failure or error
 // fails CLOSED (no sends this run); the row stays pending for a later run.
 
 // Returns { taken: true, day } when a slot was taken (day is the IST budget
