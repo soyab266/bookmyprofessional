@@ -34,28 +34,33 @@
 --   If INTERNAL_SECRET is ever rotated in Vercel (separate decision), the
 --   Vault secret must be re-saved or dispatch stops with 401s.
 --
--- BUDGET ENFORCEMENT - VOLUME ONLY, NEVER RUPEES (revised 18 Nov):
---   Caps are enforced inside the dispatcher (src/lib/registration-outbox.js,
---   this branch), checked FRESH before every single row claim, counting both
---   in-flight ('sending') and 'accepted' rows. Counting in-flight rows is
---   what makes concurrent invocations see each other's work; the residual
---   overshoot window is the microseconds between one invocation's count and
---   its claim, bounded by the number of truly simultaneous invocations
---   (in practice <= 2: this cron plus a manual call) - never by batch size.
---   Rows over the cap stay pending, burn no attempt, and are retried by a
---   later run; a budget-count failure fails CLOSED (no sends that run).
---   Defaults: 25 accepts/day (IST) and 500 all-in; the owner sets the real
---   numbers at activation through Vercel env WELCOME_DAILY_ACCEPT_CAP and
---   WELCOME_TOTAL_ACCEPT_CAP (Production). Covered by unit tests.
---   A previous draft put this cap as a one-time count in the cron WHERE
---   clause; that was REMOVED because a pre-invocation count can overshoot by
---   the whole batch and cannot see concurrent or manual dispatch runs.
+-- BUDGET ENFORCEMENT - VOLUME ONLY, NEVER RUPEES (revised 18 Nov, 2nd round):
+--   Caps are enforced by ATOMIC RESERVATION, not by counting: every send
+--   from ANY dispatcher invocation (this cron, a manual POST, overlapping
+--   runs) must first take a slot through the reserve_welcome_send() RPC
+--   (supabase/registration_welcome_budget.sql) - one conditional increment
+--   of a single counter row in ONE UPDATE. PostgreSQL row locking serializes
+--   concurrent UPDATEs on that row, so exactly one invocation can take the
+--   last slot. There is no count/claim window to race, so there is NO
+--   overshoot bound to qualify: serialization is total across all
+--   invocations.
+--   - Reservations are KEPT for accepted AND 'uncertain' outcomes (a held,
+--     possibly-real send must consume budget), and RELEASED only when Meta
+--     was definitely never reached (claim lost, simulated, not-attempted).
+--   - A worker crash between reserve and persist leaks one slot; leaks only
+--     ever REDUCE future sends (safe direction), owner can reset the row.
+--   - Cap numbers live in the budget row (seeded 25/day IST, 500 all-in);
+--     the owner changes them with one UPDATE - no code or env change.
+--   - Reserve denied or error fails CLOSED: rows stay pending, burn no
+--     attempt, and are retried by a later run.
+--   Earlier drafts (a cron-side WHERE count, then a per-claim count) were
+--   both REMOVED: any count-then-act design races under concurrency.
 --   THESE CAPS ARE NOT A MONEY CAP: Meta charges per DELIVERED message plus
 --   applicable tax (rate verified at base Rs0.115/Utility message, tax
---   unverified), so an accept count cannot bound rupees. The rupee bound is
---   the prepaid balance (Rs100 available, UPI-funded, verified 18 Nov), which
---   only the owner funds - funding level is a separate owner decision, not
---   part of this draft.
+--   unverified), so no counter bounds rupees. The rupee bound is the prepaid
+--   balance (Rs100 available, UPI-funded, verified 18 Nov), which only the
+--   owner funds - funding level is a separate owner decision, not part of
+--   this draft.
 --
 -- BACKLOG / CUTOFF (no silent messaging of old accounts):
 --   - The enqueue trigger fires AFTER INSERT on profiles only, so no existing
@@ -121,10 +126,9 @@ create extension if not exists pg_net;
 -- );
 
 -- ACTIVATION CHECKLIST (each step owner-approved at activation, none done now):
---   1. Choose cap numbers and set WELCOME_DAILY_ACCEPT_CAP /
---      WELCOME_TOTAL_ACCEPT_CAP in Vercel Production env (defaults 25 / 500
---      apply if unset). Decide the prepaid funding level separately - that is
---      the actual rupee bound.
+--   1. Apply registration_welcome_budget.sql, then choose cap numbers with
+--      one UPDATE on the budget row (seeded 25/day, 500 all-in). Decide the
+--      prepaid funding level separately - that is the actual rupee bound.
 --   2. Save INTERNAL_SECRET as Vault secret 'bmp_internal_secret' via the
 --      dashboard Secrets UI + vault-fill flow described above.
 --   3. Review existing notification_outbox rows; mark anything that must not
