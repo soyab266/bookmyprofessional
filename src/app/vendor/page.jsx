@@ -222,6 +222,9 @@ export default function VendorPortalPage() {
   const [scheduleState, setScheduleState] = useState(() => ({ ...DEFAULT_SCHEDULE }));
   const [savedScheduleState, setSavedScheduleState] = useState(null); // null if unsaved draft
   const [isScheduleSaved, setIsScheduleSaved] = useState(false);
+  // False until the first profile + documents fetch settles, so status badges
+  // don't flash "Unverified" / "Not bookable yet" from empty defaults.
+  const [isProfileLoaded, setIsProfileLoaded] = useState(false);
   const [isSavingSchedule, setIsSavingSchedule] = useState(false);
 
   const hasUnsavedChanges = useMemo(() => {
@@ -323,6 +326,8 @@ export default function VendorPortalPage() {
         setSavedScheduleState(null);
         setIsScheduleSaved(false);
       }
+    }).finally(() => {
+      if (active) setIsProfileLoaded(true);
     });
     return () => {
       active = false;
@@ -481,6 +486,7 @@ export default function VendorPortalPage() {
   }
 
   const allApproved = verificationStatus === "approved";
+  const isStatusLoading = isLoading || !isProfileLoaded || isLoadingDocs;
 
   const hasValidPayout = hasValidPayoutDetails(payoutDetails);
 
@@ -852,7 +858,12 @@ export default function VendorPortalPage() {
                     )}
                   </p>
                   <div>
-                    {verificationStatus === "approved" ? (
+                    {isStatusLoading ? (
+                      <span
+                        aria-label="Loading verification status"
+                        className="inline-block h-5 w-28 rounded-full bg-dark-100 animate-pulse align-middle"
+                      />
+                    ) : verificationStatus === "approved" ? (
                       <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
                         <Check className="w-3.5 h-3.5 stroke-[3]" /> Verified Pro
                       </span>
@@ -869,7 +880,7 @@ export default function VendorPortalPage() {
                         <AlertCircle className="w-3.5 h-3.5" /> Unverified
                       </span>
                     )}
-                    {!isScheduleSaved ? (
+                    {isStatusLoading ? null : !isScheduleSaved ? (
                       <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-50 px-2.5 py-0.5 rounded-full border border-amber-200">
                         <Clock className="w-3.5 h-3.5" /> Not bookable yet
                       </span>
@@ -912,19 +923,31 @@ export default function VendorPortalPage() {
                     disabled={isUploadingPhoto}
                   />
                 </label>
-                <Link
-                  href={`/professionals/${user?.id}`}
-                  className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl border border-border hover:bg-dark-50 text-dark-700 text-xs font-semibold transition-colors"
-                >
-                  <span>View Public Profile</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </Link>
+                {user?.id ? (
+                  <Link
+                    href={`/professionals/${user?.id}`}
+                    className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl border border-border hover:bg-dark-50 text-dark-700 text-xs font-semibold transition-colors"
+                  >
+                    <span>View Public Profile</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl border border-border text-dark-400 text-xs font-semibold opacity-60 cursor-default"
+                  >
+                    <span>View Public Profile</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </span>
+                )}
               </div>
             </div>
           </div>
 
           {/* DYNAMIC VERIFICATION BANNER */}
-          {verificationStatus === "approved" ? (
+          {isStatusLoading ? (
+            <div className="mb-8 h-[72px] rounded-2xl border border-border bg-dark-50 animate-pulse" />
+          ) : verificationStatus === "approved" ? (
             <div className="mb-8 flex items-start gap-3 p-4 rounded-2xl border border-emerald-200 bg-emerald-50 shadow-xs">
               <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5 text-emerald-600" />
               <div>
