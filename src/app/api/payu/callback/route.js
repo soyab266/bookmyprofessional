@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { verifyPaymentHash, getPayuConfig, amountsMatch } from '@/lib/payu';
 import { dispatchBookingConfirmedNotifications } from '@/lib/booking-notifications';
+import { confirmVerifiedPaidBooking } from '@/lib/booking-alert-outbox';
 
 function supabaseAdmin() {
   return createClient(
@@ -48,22 +49,13 @@ export async function POST(req) {
     }
 
     if (status === 'success') {
-      // Atomic update — returns data only if transition was from non-paid to paid
-      const { data: updatedRows } = await supabase
-        .from('bookings')
-        .update({ payment_status: 'paid', status: 'upcoming' })
-        .eq('id', txnid)
-        .neq('payment_status', 'paid')
-        .select('*');
-
-      await supabase
-        .from('payments')
-        .update({ status: 'held', provider: 'payu', provider_ref: mihpayid || null })
-        .eq('booking_id', txnid);
+      // Existing hash and amount checks above remain mandatory.
+      // Flag on: payment and minimal verified receipt commit, without queue/profile operations.
+      const confirmedBooking = await confirmVerifiedPaidBooking(supabase, txnid, amount, mihpayid);
 
       // Only dispatch notifications if this request was the one that flipped payment_status to 'paid'
-      if (updatedRows && updatedRows.length > 0) {
-        await dispatchBookingConfirmedNotifications(updatedRows[0] || booking, supabase);
+      if (confirmedBooking) {
+        await dispatchBookingConfirmedNotifications(confirmedBooking, supabase);
       }
 
       return NextResponse.redirect(new URL(`/dashboard?payment=success&bookingId=${txnid}`, req.url), { status: 303 });
