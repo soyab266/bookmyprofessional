@@ -18,3 +18,19 @@ alter table public.notification_outbox
 -- Webhook status callbacks look rows up by the provider message id.
 create index if not exists notification_outbox_meta_message_id
   on public.notification_outbox (meta_message_id);
+
+-- Staging for status events that arrive before the outbox row holds their
+-- wamid (webhook/acceptance race) or for messages accepted before tracking
+-- existed. Rows are deleted when reconciled at acceptance time; rows whose
+-- wamid never gets an outbox row linger for manual review/cleanup.
+create table if not exists public.meta_status_events (
+  id uuid primary key default gen_random_uuid(),
+  meta_message_id text not null,
+  status text not null,
+  status_at timestamptz,
+  error text,
+  received_at timestamptz not null default now()
+);
+
+create index if not exists meta_status_events_meta_message_id
+  on public.meta_status_events (meta_message_id);
