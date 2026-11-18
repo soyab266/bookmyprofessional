@@ -169,15 +169,21 @@ const STALE_CLAIM_MS = 10 * 60 * 1000;
 // bounds rupees. The rupee bound is the prepaid balance, which only the
 // owner funds; funding level is a separate owner decision.
 //
-// Cap numbers live in the budget row (owner updates them with one UPDATE at
-// activation; seeded at the proposed 5/day IST, 20 all-in, pending owner
-// approval). A reserve failure or error
-// fails CLOSED (no sends this run); the row stays pending for a later run.
+// Cap numbers live in the budget row (owner updates them with one UPDATE;
+// seeded at the owner-approved pilot plan of 18 Nov: 3/day IST, 3 all-in,
+// "Total 3 attempts in 2 days" - activation itself still pending). The
+// same row carries the hard pilot expiry: while expires_at is NULL (not
+// yet armed at activation) or once it passes, the reserve RPC denies every
+// slot, so this dispatcher can only send inside the armed pilot window.
+// The daily reset never replenishes the all-in cap. A reserve denial or
+// error fails CLOSED (no sends this run); the row stays pending for a
+// later run.
 
 // Returns { taken: true, day } when a slot was taken (day is the IST budget
 // day the slot counts against, echoed back for a later same-day release),
-// { taken: false } when a cap is reached, or { taken: false, error: true }
-// when the reserve itself failed - the caller fails closed on either.
+// { taken: false } when a cap is reached or the pilot is unarmed/expired,
+// or { taken: false, error: true } when the reserve itself failed - the
+// caller fails closed on either.
 async function reserveSendSlot(supabase) {
   try {
     const { data, error } = await supabase.rpc('reserve_welcome_send');
