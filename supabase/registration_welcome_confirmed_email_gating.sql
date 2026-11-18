@@ -68,8 +68,10 @@
 --   eliminate arbitrary-number abuse. Closing that needs a phone-OTP
 --   flow (e.g. WhatsApp OTP via Meta, or Supabase Phone auth), which is a
 --   separate, larger product decision. Until then the residual exposure is
---   bounded by the dispatcher volume caps (proposed 5/day, 20 all-in)
---   and the prepaid balance, and Meta-side abuse signals (blocks/reports)
+--   bounded by the dispatcher volume caps (owner-approved pilot plan
+--   18 Nov: 3/day, 3 all-in, plus a hard 2-day expiry armed at
+--   activation; activation itself still pending) and the prepaid
+--   balance, and Meta-side abuse signals (blocks/reports)
 --   should be watched after activation.
 --   Accounts that never confirm their email never get the welcome message.
 --
