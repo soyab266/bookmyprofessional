@@ -2,8 +2,7 @@
 -- Registration welcome dispatch schedule: calls the already-deployed
 -- dispatcher route every 5 minutes through Supabase Cron (pg_cron + pg_net),
 -- authenticating with a secret held in Supabase Vault (never in this repo,
--- never in chat, never in SQL history, never in a readable job definition),
--- with an owner-set daily and all-in accept cap enforced inside the job.
+-- never in chat, never in SQL history, never in a readable job definition).
 --
 -- Why this design (reviewed 18 Nov 2026):
 --   - The Vercel team is on the Hobby plan. Vercel's own docs state Hobby
@@ -35,21 +34,41 @@
 --   If INTERNAL_SECRET is ever rotated in Vercel (separate decision), the
 --   Vault secret must be re-saved or dispatch stops with 401s.
 --
--- BUDGET ENFORCEMENT (inside the job, no code changes):
---   The job POSTs only while BOTH caps hold, counting rows the dispatcher
---   marked 'accepted'. Counting accepted is a CONSERVATIVE proxy for spend:
---   Meta charges on delivery, so accepted >= actually charged.
---     Daily cap:  accepts since the start of the current IST day.
---     All-in cap: accepts since the outbox began.
---   The cap NUMBERS (<DAILY-ACCEPT-CAP> / <ALL-IN-ACCEPT-CAP>) are chosen by
---   the owner at activation - e.g. at base Rs0.115 per delivered Utility
---   message, 25/day and 500 all-in bound spend to about Rs2.9/day and
---   Rs57.50 all-in before tax. When a cap is reached the job silently skips
---   until the next IST day (daily) or until the cap is raised (all-in);
---   queued rows simply stay pending and nothing is lost.
---   Separately, the account is prepaid (Rs100 available, UPI-funded,
---   verified 18 Nov): Meta deducts per delivered message from available
---   funds, which bounds total exposure to the funded balance.
+-- BUDGET ENFORCEMENT - VOLUME ONLY, NEVER RUPEES (revised 18 Nov):
+--   Caps are enforced inside the dispatcher (src/lib/registration-outbox.js,
+--   this branch), checked FRESH before every single row claim, counting both
+--   in-flight ('sending') and 'accepted' rows. Counting in-flight rows is
+--   what makes concurrent invocations see each other's work; the residual
+--   overshoot window is the microseconds between one invocation's count and
+--   its claim, bounded by the number of truly simultaneous invocations
+--   (in practice <= 2: this cron plus a manual call) - never by batch size.
+--   Rows over the cap stay pending, burn no attempt, and are retried by a
+--   later run; a budget-count failure fails CLOSED (no sends that run).
+--   Defaults: 25 accepts/day (IST) and 500 all-in; the owner sets the real
+--   numbers at activation through Vercel env WELCOME_DAILY_ACCEPT_CAP and
+--   WELCOME_TOTAL_ACCEPT_CAP (Production). Covered by unit tests.
+--   A previous draft put this cap as a one-time count in the cron WHERE
+--   clause; that was REMOVED because a pre-invocation count can overshoot by
+--   the whole batch and cannot see concurrent or manual dispatch runs.
+--   THESE CAPS ARE NOT A MONEY CAP: Meta charges per DELIVERED message plus
+--   applicable tax (rate verified at base Rs0.115/Utility message, tax
+--   unverified), so an accept count cannot bound rupees. The rupee bound is
+--   the prepaid balance (Rs100 available, UPI-funded, verified 18 Nov), which
+--   only the owner funds - funding level is a separate owner decision, not
+--   part of this draft.
+--
+-- BACKLOG / CUTOFF (no silent messaging of old accounts):
+--   - The enqueue trigger fires AFTER INSERT on profiles only, so no existing
+--     account is ever retroactively queued by applying the activation SQL.
+--   - Rows already sitting in notification_outbox before activation WOULD be
+--     dispatched by the first cron run. Live state verified 18 Nov ~19:54 IST
+--     (read-only count in the production SQL editor): the table holds exactly
+--     ONE row - the 10:19 test row, status 'accepted' (no pending, sending or
+--     uncertain rows), so today there is NO backlog that could dispatch.
+--     Re-verify at activation: review every existing row and mark any row
+--     that must not send as 'skipped' BEFORE scheduling the job. That is a
+--     one-time, owner-approved live step at activation - not part of this
+--     draft migration.
 --
 -- pg_net behavior relied on (Supabase docs):
 --   net.http_post is asynchronous fire-and-forget; responses land in
@@ -64,7 +83,8 @@
 -- CADENCE: one authenticated POST every 5 minutes = 288/day (~8.6k/month).
 --   Observed on the Vercel Hobby usage meter (18 Nov): Function Invocations
 --   113K / 1M per 30 days, so the added calls are under 1% of the plan
---   quota. An empty queue costs one cheap indexed read per run.
+--   quota. A capped or empty run costs one function invocation doing a few
+--   cheap indexed counts.
 --
 -- REVERSAL (full):
 --   select cron.unschedule('registration-welcome-dispatch');
@@ -75,9 +95,10 @@
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
--- Applied verbatim at activation time, with only the two cap NUMBERS chosen
--- by the owner (the secret value is resolved from Supabase Vault at run
--- time, never written here):
+-- Applied verbatim at activation time (the secret value is resolved from
+-- Supabase Vault at run time, never written here). No cap arithmetic in the
+-- job itself: the dispatcher enforces caps per claim, so this job is a plain
+-- authenticated trigger and nothing else.
 --
 -- select cron.schedule(
 --   'registration-welcome-dispatch',
@@ -95,18 +116,24 @@ create extension if not exists pg_net;
 --     ),
 --     body := '{}'::jsonb,
 --     timeout_milliseconds := 30000
---   ) as request_id
---   where (select count(*) from public.notification_outbox
---            where status = 'accepted'
---              and accepted_at >= (date_trunc('day', now() at time zone 'Asia/Kolkata')
---                                  at time zone 'Asia/Kolkata')) < <DAILY-ACCEPT-CAP>
---     and (select count(*) from public.notification_outbox
---            where status = 'accepted') < <ALL-IN-ACCEPT-CAP>;
+--   ) as request_id;
 --   $$
 -- );
 
--- Verification after apply:
---   select jobname, schedule, active from cron.job;
---   -- after ~5 minutes: select status, error_msg, status_code
---   --   from net._http_response order by created desc limit 5;
---   -- outbox rows should leave 'pending' (accepted / skipped / held uncertain).
+-- ACTIVATION CHECKLIST (each step owner-approved at activation, none done now):
+--   1. Choose cap numbers and set WELCOME_DAILY_ACCEPT_CAP /
+--      WELCOME_TOTAL_ACCEPT_CAP in Vercel Production env (defaults 25 / 500
+--      apply if unset). Decide the prepaid funding level separately - that is
+--      the actual rupee bound.
+--   2. Save INTERNAL_SECRET as Vault secret 'bmp_internal_secret' via the
+--      dashboard Secrets UI + vault-fill flow described above.
+--   3. Review existing notification_outbox rows; mark anything that must not
+--      send 'skipped' (see BACKLOG / CUTOFF above).
+--   4. Apply this file's two create-extension statements and the cron.schedule
+--      call.
+--   5. Verify:
+--      select jobname, schedule, active from cron.job;
+--      -- after ~5 minutes: select status, error_msg, status_code
+--      --   from net._http_response order by created desc limit 5;
+--      -- outbox rows should leave 'pending' (accepted / skipped / held
+--      -- uncertain), and the route returns a capped count once caps bite.
