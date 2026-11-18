@@ -6,6 +6,7 @@ import {
   splitMetaWebhookPayload,
   recordMetaStatusUpdate,
   stageMetaStatusEvent,
+  reconcileStagedStatusEvents,
 } from '@/lib/meta-tracking';
 
 /**
@@ -81,6 +82,7 @@ export async function POST(req) {
   let matched = 0;
   let stale = 0;
   let staged = 0;
+  let drained = 0;
   for (const update of statuses) {
     const result = await recordMetaStatusUpdate(supabase, update);
     if (result.matched && result.applied !== false) {
@@ -98,6 +100,13 @@ export async function POST(req) {
         console.error('[MetaTracking] unmatched status event could not be staged; reason:', s.reason);
       }
     }
+    // Drain staging for this wamid from either side of the race: if the
+    // acceptance row was just saved (matched above), apply anything staged;
+    // if we just staged (row still missing), this is a no-op unless the
+    // acceptance save landed in between - closing the interleave where the
+    // dispatcher's own reconcile already ran before our insert.
+    const rec = await reconcileStagedStatusEvents(supabase, update.metaMessageId);
+    if (rec.staged > 0) drained += rec.staged;
   }
-  return NextResponse.json({ received: true, statuses: statuses.length, matched, stale, staged });
+  return NextResponse.json({ received: true, statuses: statuses.length, matched, stale, staged, drained });
 }
