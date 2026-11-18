@@ -14,6 +14,8 @@ import { META_TEMPLATE } from '../src/lib/meta-whatsapp-templates.js';
 // In-memory mock of the supabase query builder covering the outbox flows.
 // profiles option: 'auto' (default: every requested id is consenting),
 // an array of profile rows, or { error: 'message' } for a failed read.
+const MOCK_BUDGET_DAY = new Date().toISOString().slice(0, 10);
+
 function mockSupabase(initialRows = [], profiles = 'auto', opts = {}) {
   const rows = initialRows.map((r, i) => ({ id: r.id || `row-${i + 1}`, attempts: 0, ...r }));
   let inserted = 0;
@@ -110,7 +112,7 @@ function mockSupabase(initialRows = [], profiles = 'auto', opts = {}) {
       return builder;
     },
     budget,
-    async rpc(name) {
+    async rpc(name, params) {
       assert.ok(
         name === 'reserve_welcome_send' || name === 'release_welcome_send',
         `unexpected rpc ${name}`
@@ -118,15 +120,18 @@ function mockSupabase(initialRows = [], profiles = 'auto', opts = {}) {
       if (opts.rpcError) return { data: null, error: { message: 'rpc failed' } };
       if (name === 'reserve_welcome_send') {
         if (budget.total_used >= budget.total_cap || budget.daily_used >= budget.daily_cap) {
-          return { data: false, error: null };
+          return { data: { taken: false }, error: null };
         }
         budget.daily_used++;
         budget.total_used++;
-        return { data: true, error: null };
+        return { data: { taken: true, day: MOCK_BUDGET_DAY }, error: null };
       }
-      // release_welcome_send: never drops below zero (mirrors greatest(...,0))
-      budget.daily_used = Math.max(0, budget.daily_used - 1);
+      // release_welcome_send(p_day): total always gives back; daily only when
+      // the reservation's day is still the current budget day (mirrors SQL).
       budget.total_used = Math.max(0, budget.total_used - 1);
+      if (params && params.p_day === MOCK_BUDGET_DAY) {
+        budget.daily_used = Math.max(0, budget.daily_used - 1);
+      }
       return { data: null, error: null };
     },
   };
