@@ -19,6 +19,10 @@ const routeSrc = readFileSync(
   new URL('../src/app/api/webhooks/meta-whatsapp/route.js', import.meta.url),
   'utf8'
 );
+const trackingSrc = readFileSync(
+  new URL('../src/lib/meta-tracking.js', import.meta.url),
+  'utf8'
+);
 const outboxSrc = readFileSync(
   new URL('../src/lib/registration-outbox.js', import.meta.url),
   'utf8'
@@ -59,7 +63,12 @@ function mockDb(initial = {}) {
         _fields: null,
         _limit: null,
         select(cols) {
-          q._mode = 'select';
+          // select() after update/delete is RETURNING, not a mode switch.
+          if (q._mode === 'update' || q._mode === 'delete') {
+            q._returning = true;
+          } else {
+            q._mode = 'select';
+          }
           q._cols = cols;
           return q;
         },
@@ -81,19 +90,36 @@ function mockDb(initial = {}) {
           q._filters.push([c, v]);
           return q;
         },
+        or(clause) {
+          // Minimal parser for the only shape used: "col.is.null,col.lt.N".
+          q._or = clause;
+          const parts = clause.split(',').map((p) => {
+            const [col, op, val] = p.split('.');
+            if (op === 'is' && val === 'null') return (r) => r[col] == null;
+            if (op === 'lt') return (r) => r[col] != null && r[col] < Number(val);
+            throw new Error(`unsupported or-clause ${p}`);
+          });
+          q._filters.push((r) => parts.some((f) => f(r)));
+          return q;
+        },
         limit(n) {
           q._limit = n;
           return q;
         },
         then(resolve) {
-          const match = () => rows.filter((r) => q._filters.every(([c, v]) => r[c] === v));
+          const match = () =>
+            rows.filter((r) =>
+              q._filters.every((f) => (typeof f === 'function' ? f(r) : r[f[0]] === f[1]))
+            );
           let out = { data: null, error: null };
           if (q._mode === 'select') {
             let m = match().map((r) => project(r, q._cols));
             if (q._limit) m = m.slice(0, q._limit);
             out = { data: m, error: null };
           } else if (q._mode === 'update') {
-            for (const r of match()) Object.assign(r, q._fields);
+            const m = match();
+            for (const r of m) Object.assign(r, q._fields);
+            if (q._returning) out = { data: m.map((r) => project(r, q._cols)), error: null };
           } else if (q._mode === 'insert') {
             rows.push({
               id: `${name}-${rows.length + 1}`,
@@ -199,10 +225,34 @@ test('record: known wamid updates delivery fields, unknown wamid reported unmatc
   const ok = await recordMetaStatusUpdate(db, UPD());
   assert.deepEqual(ok, { matched: true, applied: true });
   assert.equal(db.tables.notification_outbox[0].delivery_status, 'delivered');
+  assert.equal(db.tables.notification_outbox[0].delivery_status_rank, 2);
   assert.equal(db.tables.notification_outbox[0].delivery_status_at, '2026-11-18T10:20:00.000Z');
 
   const miss = await recordMetaStatusUpdate(db, UPD({ metaMessageId: 'wamid.UNKNOWN', statusAt: null }));
   assert.deepEqual(miss, { matched: false, reason: 'unknown_message_id' });
+});
+
+test('guard is a single atomic conditional update: the rank filter travels with the write', async () => {
+  // The regression protection must live IN the update's WHERE clause (under
+  // Postgres's row lock), not in a prior read - otherwise two concurrent
+  // handlers can both read 'delivered' and one writes stale 'sent' last.
+  assert.match(trackingSrc, /\.or\(`delivery_status_rank\.is\.null,delivery_status_rank\.lt\.\$\{rank\}`\)/);
+  const orIdx = trackingSrc.indexOf('.or(`delivery_status_rank.is.null');
+  const updateIdx = trackingSrc.indexOf(".update({\n        delivery_status: update.status,");
+  const selectIdx = trackingSrc.indexOf(".select('id')");
+  assert.ok(updateIdx > -1 && orIdx > updateIdx && selectIdx > orIdx, 'update -> or -> select chain');
+
+  // Behaviorally: a stale write against a further-along row matches zero
+  // rows at write time - the guard rejects it in the same statement.
+  const db = mockDb({
+    notification_outbox: [
+      { id: 'row-1', meta_message_id: 'wamid.ABC', delivery_status: 'delivered', delivery_status_rank: 2 },
+    ],
+  });
+  const r = await recordMetaStatusUpdate(db, UPD({ status: 'sent' }));
+  assert.deepEqual(r, { matched: true, applied: false, reason: 'stale_or_duplicate' });
+  assert.equal(db.tables.notification_outbox[0].delivery_status, 'delivered');
+  assert.equal(db.tables.notification_outbox[0].delivery_status_rank, 2);
 });
 
 // --- Ordering and dedup guard ---
@@ -269,12 +319,24 @@ test('race: unmatched status stages durably; reconciliation applies furthest-alo
   assert.equal(db.tables.meta_status_events.length, 0);
 });
 
+test('reconcile: unapplied events are NEVER deleted (row missing or write failed)', async () => {
+  // The acceptance row does not exist yet: reconcile must keep every staged
+  // event for the next opportunity instead of clearing staging.
+  const db = mockDb();
+  await stageMetaStatusEvent(db, UPD({ status: 'sent' }));
+  await stageMetaStatusEvent(db, UPD({ status: 'delivered' }));
+  const rec = await reconcileStagedStatusEvents(db, 'wamid.ABC');
+  assert.deepEqual(rec, { applied: false, matched: false, staged: 2 });
+  assert.equal(db.tables.meta_status_events.length, 2);
+  assert.match(trackingSrc, /if \(result\.matched\) \{\s*const \{ error: delError \}/);
+});
+
 test('reconcile: no staged rows is a no-op; staged rows respect the forward-only guard', async () => {
   const db = mockDb();
   assert.deepEqual(await reconcileStagedStatusEvents(db, 'wamid.NONE'), { applied: false, staged: 0 });
 
   // Row already further along than the staged event: guard keeps it, staging still cleared.
-  db.tables.notification_outbox.push({ id: 'row-1', meta_message_id: 'wamid.ABC', delivery_status: 'read' });
+  db.tables.notification_outbox.push({ id: 'row-1', meta_message_id: 'wamid.ABC', delivery_status: 'read', delivery_status_rank: 3 });
   await stageMetaStatusEvent(db, UPD({ status: 'sent' }));
   const rec = await reconcileStagedStatusEvents(db, 'wamid.ABC');
   assert.deepEqual(rec, { applied: false, matched: true, staged: 1 });
@@ -318,10 +380,14 @@ test('route: signature verified before parsing; disabled tracking drops loudly',
   assert.match(routeSrc, /if \(!appSecret\)/);
 });
 
-test('route: unmatched statuses are staged, never dropped; stale events counted', () => {
+test('route: unmatched statuses are staged, never dropped; every event drains staging', () => {
   assert.match(routeSrc, /stageMetaStatusEvent/);
-  assert.match(routeSrc, /staged for later reconciliation|staged durably/i);
-  assert.match(routeSrc, /matched, stale, staged/);
+  assert.match(routeSrc, /staged durably/i);
+  assert.match(routeSrc, /matched, stale, staged, drained/);
+  // Both sides of the race reconcile: the route drains staging after every
+  // status event, the dispatcher drains at acceptance save.
+  assert.match(routeSrc, /reconcileStagedStatusEvents\(supabase, update\.metaMessageId\)/);
+  assert.match(routeSrc, /acceptance save landed in between/);
 });
 
 test('route: GET challenge fails closed without verify token', () => {
@@ -350,4 +416,8 @@ test('migration: draft-only header, adds tracking columns, lookup index, and sta
   assert.match(migrationSql, /notification_outbox_meta_message_id/);
   assert.match(migrationSql, /create table if not exists public\.meta_status_events/);
   assert.match(migrationSql, /meta_status_events_meta_message_id/);
+  // Atomic guard column + RLS/service-role-only access on staging.
+  assert.match(migrationSql, /add column if not exists delivery_status_rank smallint/);
+  assert.match(migrationSql, /alter table public\.meta_status_events enable row level security/);
+  assert.match(migrationSql, /to service_role/);
 });
