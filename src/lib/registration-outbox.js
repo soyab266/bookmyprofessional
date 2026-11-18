@@ -140,75 +140,57 @@ async function claimOutboxRow(supabase, id) {
 const STALE_CLAIM_MS = 10 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
-// Budget caps - message VOLUME, never rupees.
+// Budget caps - message VOLUME, never rupees - enforced by ATOMIC RESERVATION.
 //
-// These caps bound how many rows the dispatcher will claim. They are checked
-// FRESH before every single claim (not once per invocation), counting both
-// in-flight ('sending') and completed ('accepted') rows, so a concurrent
-// invocation's claims are visible to this one as soon as they commit. The
-// residual overshoot window is the microseconds between one invocation's
-// count and its claim, and is bounded by the number of truly simultaneous
-// invocations (in practice <= 2: the 5-minute cron plus a manual call) -
-// never by the batch size. Rows over the cap stay pending, burn no attempt,
-// and are picked up by a later run: nothing is lost when a cap bites.
+// A cap enforced by counting rows and then claiming races: two concurrent
+// invocations can both observe "under cap" and both send. Instead, every
+// send - from ANY invocation of this dispatcher (the 5-minute cron, a manual
+// POST, overlapping runs) - must first take a slot through the
+// reserve_welcome_send() RPC (supabase/registration_welcome_budget.sql):
+// one conditional increment of a single counter row in ONE UPDATE.
+// PostgreSQL serializes concurrent UPDATEs on that row, so exactly one
+// invocation can take the last available slot. The reservation IS the lock -
+// there is no count/claim window to race.
 //
-// This is NOT a money cap and is never described as one: Meta charges per
-// DELIVERED message plus applicable tax (unverified), so an accept count
-// cannot bound rupees. The rupee bound is the prepaid balance, which only
-// the owner funds; funding level is a separate owner decision.
+// Reservation lifecycle:
+//   KEPT     - Meta accepted the message, and
+//            - the outcome is 'uncertain' (Meta MAY have accepted it: a held,
+//              possibly real send, so it must consume budget - otherwise
+//              retries alongside held uncertains could ratchet spend).
+//   RELEASED - Meta was definitely never reached: claim lost to a concurrent
+//              run, simulated send, not-attempted outcomes (missing
+//              credentials, payload validation). Those cost nothing.
+// A crash between reserve and persist leaks one slot; leaks only ever
+// REDUCE what can be sent, so the failure direction is safe (documented in
+// the budget SQL).
 //
-// Defaults are deliberately small; the owner sets the real numbers at
-// activation via Vercel env (WELCOME_DAILY_ACCEPT_CAP /
-// WELCOME_TOTAL_ACCEPT_CAP). A count failure fails CLOSED (no sends).
-function parseCap(value, fallback) {
-  const n = Number.parseInt(value, 10);
-  return Number.isFinite(n) && n >= 0 ? n : fallback;
-}
+// The caps are NOT a money cap and are never described as one: Meta charges
+// per DELIVERED message plus applicable tax (unverified), so no counter
+// bounds rupees. The rupee bound is the prepaid balance, which only the
+// owner funds; funding level is a separate owner decision.
+//
+// Cap numbers live in the budget row (owner updates them with one UPDATE at
+// activation; seeded 25/day IST, 500 all-in). A reserve failure or error
+// fails CLOSED (no sends this run); the row stays pending for a later run.
 
-const DAILY_ACCEPT_CAP = parseCap(process.env.WELCOME_DAILY_ACCEPT_CAP, 25);
-const TOTAL_ACCEPT_CAP = parseCap(process.env.WELCOME_TOTAL_ACCEPT_CAP, 500);
-
-// Start of the current day in Asia/Kolkata (UTC+5:30, no DST) as a UTC ISO
-// string, for comparing against accepted_at timestamptz values.
-function istDayStartIso() {
-  const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-  const nowAsIst = new Date(Date.now() + IST_OFFSET_MS);
-  const istDayStartUtc = Date.UTC(
-    nowAsIst.getUTCFullYear(),
-    nowAsIst.getUTCMonth(),
-    nowAsIst.getUTCDate()
-  );
-  return new Date(istDayStartUtc - IST_OFFSET_MS).toISOString();
-}
-
-async function headCount(supabase, build) {
+// Returns true (slot taken), false (over cap), or null (error - fail closed).
+async function reserveSendSlot(supabase) {
   try {
-    let q = supabase.from(OUTBOX_TABLE).select('id', { count: 'exact', head: true });
-    q = build(q);
-    const { count, error } = await q;
+    const { data, error } = await supabase.rpc('reserve_welcome_send');
     if (error) return null;
-    return count ?? 0;
+    return data === true;
   } catch {
     return null;
   }
 }
 
-// Fresh budget picture. 'sending' rows count against BOTH windows: they are
-// in-flight sends whose cost may land in either window, and counting them is
-// what makes concurrent invocations see each other's work.
-// Returns null when any count fails (caller must fail closed).
-async function budgetUsage(supabase) {
-  const dayStart = istDayStartIso();
-  const [acceptedToday, sendingNow, acceptedTotal] = await Promise.all([
-    headCount(supabase, (q) => q.eq('status', 'accepted').gte('accepted_at', dayStart)),
-    headCount(supabase, (q) => q.eq('status', 'sending')),
-    headCount(supabase, (q) => q.eq('status', 'accepted')),
-  ]);
-  if (acceptedToday === null || sendingNow === null || acceptedTotal === null) return null;
-  return {
-    daily: acceptedToday + sendingNow,
-    total: acceptedTotal + sendingNow,
-  };
+// Best-effort release; only called when Meta was definitely never reached.
+async function releaseSendSlot(supabase) {
+  try {
+    await supabase.rpc('release_welcome_send');
+  } catch {
+    // A lost release only ever under-counts future spend capacity; safe.
+  }
 }
 
 /**
@@ -318,29 +300,34 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
       continue;
     }
 
-    // Budget check, fresh for THIS row (see budgetUsage): rows beyond the
-    // daily or all-in accept cap stay pending for a later run, burn no
-    // attempt, and are never dropped. Rows are processed oldest-first, so
-    // once a cap bites every later row is also over it - stop the run.
-    // A count failure fails closed (budget === null): no sends this run.
-    const budget = await budgetUsage(supabase);
-    if (!budget || budget.daily >= DAILY_ACCEPT_CAP || budget.total >= TOTAL_ACCEPT_CAP) {
+    // Atomically reserve a budget slot BEFORE claiming (see reserveSendSlot):
+    // this is the only gate, and it is race-free across all invocations.
+    // Rows beyond a cap stay pending for a later run, burn no attempt, and
+    // are never dropped; rows are oldest-first, so once a cap bites every
+    // later row is over it too - stop the run. Over-cap (false) and reserve
+    // error (null) both fail closed: no sends.
+    const reserved = await reserveSendSlot(supabase);
+    if (reserved !== true) {
       capped = rows.length - (accepted + failed + skipped + uncertain);
       break;
     }
 
     // Atomically claim the row before sending: if another dispatcher claimed
-    // it first (or the claim write failed), skip - never double-send.
+    // it first (or the claim write failed), skip - never double-send. The
+    // reservation is released: nothing was sent, so nothing may be counted.
     const claimed = await claimOutboxRow(supabase, row.id);
     if (!claimed) {
+      await releaseSendSlot(supabase);
       skipped++;
       continue;
     }
 
     const result = await send(row.payload);
     if (result?.simulated) {
-      // A simulated send is not a delivery: never mark the row sent and never
-      // burn an attempt. Release the claim back to pending.
+      // A simulated send is not a delivery: never mark the row sent, never
+      // burn an attempt, and release the budget slot - Meta was never
+      // reached. Release the claim back to pending.
+      await releaseSendSlot(supabase);
       await updateOutbox(supabase, row.id, { status: 'pending', last_error: 'simulated_not_sent' });
       skipped++;
     } else if (result?.success) {
@@ -361,7 +348,9 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
       const outcome = classifySendOutcome(result);
       const err = result?.error || result?.skipped || 'unknown_error';
       if (outcome === 'not_attempted' && !String(err).startsWith('validation_failed')) {
-        // Never reached Meta (e.g. missing credentials): safe to retry later.
+        // Never reached Meta (e.g. missing credentials): safe to retry later,
+        // and the budget slot goes back - nothing was sent.
+        await releaseSendSlot(supabase);
         await updateOutbox(supabase, row.id, {
           status: 'pending',
           attempts: (row.attempts ?? 0) + 1,
@@ -370,6 +359,8 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
         skipped++;
       } else if (outcome === 'not_attempted') {
         // Validation failure: permanent payload bug, retrying never helps.
+        // Meta was never reached, so the budget slot goes back.
+        await releaseSendSlot(supabase);
         await updateOutbox(supabase, row.id, {
           status: 'failed',
           attempts: (row.attempts ?? 0) + 1,
@@ -378,7 +369,8 @@ export async function dispatchRegistrationWelcomeOutbox(supabase, { sendImpl, li
         failed++;
       } else {
         // Uncertain: the message may have been accepted. HOLD for
-        // reconciliation; never auto-resend (duplicate loop).
+        // reconciliation; never auto-resend (duplicate loop). The budget
+        // slot is KEPT: a possibly-real send must consume budget.
         await updateOutbox(supabase, row.id, {
           status: 'uncertain',
           attempts: (row.attempts ?? 0) + 1,
