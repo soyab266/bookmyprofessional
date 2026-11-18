@@ -44,9 +44,11 @@
 --   last slot. There is no count/claim window to race, so there is NO
 --   overshoot bound to qualify: serialization is total across all
 --   invocations.
---   - Reservations are KEPT for accepted AND 'uncertain' outcomes (a held,
---     possibly-real send must consume budget), and RELEASED only when Meta
---     was definitely never reached (claim lost, simulated, not-attempted).
+--   - Reservations are KEPT for every REAL Meta request - accepted,
+--     synchronous rejection (HTTP error response), network-ambiguous
+--     'uncertain'. The approved cap counts ATTEMPTS, not accepted
+--     messages. RELEASED only when Meta was definitely never reached
+--     (claim lost, simulated, not-attempted incl. validation).
 --   - A worker crash between reserve and persist leaks one slot; leaks only
 --     ever REDUCE future sends (safe direction), owner can reset the row.
 --   - Cap numbers live in the budget row: 3/day IST and 3 all-in - the
@@ -137,27 +139,35 @@ create extension if not exists pg_net;
 --   $$
 -- );
 
--- ACTIVATION CHECKLIST (each step owner-approved at activation, none done now):
---   1. Apply registration_welcome_budget.sql (caps seeded at the approved
---      pilot plan 3/day, 3 all-in), then ARM the hard expiry:
+-- ACTIVATION CHECKLIST - exact staged order. EVERY stage waits on the
+-- explicit owner activation approval (none done now); stages 1-5 are
+-- inert-by-design (zero sends possible), stage 6 is the live moment.
+--   1. MERGE + DEPLOY: merge PR #27 and let Vercel deploy the changed
+--      dispatcher to production. Verify the route is live and fail-closed:
+--      the reserve RPC does not exist yet, so any dispatch attempt errors
+--      closed with ZERO sends (and an unauthenticated POST still gets 401).
+--   2. BUDGET, UNARMED: apply registration_welcome_budget.sql (caps 3/day,
+--      3 all-in, expires_at NULL). Verify as service_role that reserve
+--      returns taken:false (unarmed) and that anon/authenticated get
+--      permission denied. Nothing can send while unarmed.
+--   3. SECRET: save INTERNAL_SECRET as Vault secret 'bmp_internal_secret'
+--      via the dashboard Secrets UI + vault-fill flow described above.
+--   4. BACKLOG: re-review existing notification_outbox rows; mark anything
+--      that must not send 'skipped' (see BACKLOG / CUTOFF above).
+--   5. SCHEDULER ON, STILL UNARMED: apply this file's two create-extension
+--      statements and the cron.schedule call. Verify 2-3 runs:
+--        select jobname, schedule, active from cron.job;
+--        select status, error_msg, status_code
+--          from net._http_response order by created desc limit 5;
+--      Runs must show HTTP 200 with ZERO sends (reserve denies - unarmed).
+--   6. READINESS GATE (the live moment, still under the same explicit
+--      approval): apply registration_welcome_confirmed_email_gating.sql
+--      (queues on future email confirmations only; nothing retroactive),
+--      then ARM the 48-hour window:
 --        update public.notification_dispatch_budget
 --          set expires_at = now() + interval '2 days' where id = 1;
---      Until that UPDATE runs, reserve denies every send (fail closed).
---      Decide the prepaid funding level separately - that is the actual
---      rupee bound.
---   2. Save INTERNAL_SECRET as Vault secret 'bmp_internal_secret' via the
---      dashboard Secrets UI + vault-fill flow described above.
---   3. Review existing notification_outbox rows; mark anything that must not
---      send 'skipped' (see BACKLOG / CUTOFF above).
---   4. Apply this file's two create-extension statements and the cron.schedule
---      call.
---   5. Verify:
---      select jobname, schedule, active from cron.job;
---      -- after ~5 minutes: select status, error_msg, status_code
---      --   from net._http_response order by created desc limit 5;
---      -- outbox rows should leave 'pending' (accepted / skipped / held
---      -- uncertain), and the route returns a capped count once caps bite.
---   6. Pilot end (all-in cap of 3 reached OR expires_at passed - reserve
+--      The pilot clock starts at this UPDATE, not before.
+--   7. PILOT END (all-in cap of 3 reached OR expires_at passed - reserve
 --      denies either way, so nothing more can send): unschedule the job
 --      (select cron.unschedule('registration-welcome-dispatch');) and
 --      review results with the owner before any further approval.
