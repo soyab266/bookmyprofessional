@@ -31,13 +31,21 @@
 --   app UI. Consent and phone are re-read from the profile at confirmation
 --   time, which is fresher than signup-time data.
 --
--- INSERT COVERAGE (reviewed 18 Nov, second round): the trigger fires AFTER
--- INSERT OR UPDATE, not only on the NULL->set UPDATE, so an auth user
--- created ALREADY confirmed (e.g. admin.createUser with email_confirm, a
--- pre-verified OAuth identity, or any future flow that inserts
--- email_confirmed_at directly) is covered by the same gate. The partial
--- unique index makes the two firing paths overlap-safe (one active welcome
--- per user+template).
+-- INSERT COVERAGE + TRIGGER ORDERING (reviewed 18 Nov, third round):
+--   The trigger covers BOTH the NULL->set UPDATE and a user INSERTed already
+--   confirmed (admin.createUser with email_confirm, a pre-verified OAuth
+--   identity, or any future flow that sets email_confirmed_at at insert).
+--   ORDERING HAZARD found in review and fixed by design: the profiles row is
+--   created by the on_auth_user_created trigger in the SAME statement's
+--   AFTER INSERT phase, and PostgreSQL fires same-timing row triggers in
+--   trigger-NAME order - a plain AFTER INSERT trigger named like this one
+--   would run BEFORE the profile exists and silently miss every
+--   pre-confirmed insert. This trigger is therefore a CONSTRAINT TRIGGER,
+--   DEFERRABLE INITIALLY DEFERRED: it fires at COMMIT, when the profile is
+--   guaranteed to exist, independent of trigger naming. Cost: constraint
+--   triggers cannot filter columns, so it also fires (as a guarded no-op)
+--   on unrelated auth.users updates such as sign-ins. Verified offline
+--   against PostgreSQL 16 on 18 Nov (see PR discussion).
 --
 -- SUPPORTED SIGNUP AUDIENCE (precise):
 --   - Email+password registrations (app UI OR direct signUp API call) that
@@ -150,6 +158,10 @@ exception when others then
 end; $$;
 
 drop trigger if exists on_auth_user_confirmed_enqueue_welcome on auth.users;
-create trigger on_auth_user_confirmed_enqueue_welcome
-  after insert or update of email_confirmed_at on auth.users
+-- CONSTRAINT TRIGGER, deferred to COMMIT: guarantees the profiles row
+-- (created by on_auth_user_created in the same statement's AFTER INSERT
+-- phase) already exists when this fires - see ORDERING HAZARD note above.
+create constraint trigger on_auth_user_confirmed_enqueue_welcome
+  after insert or update on auth.users
+  deferrable initially deferred
   for each row execute function public.enqueue_registration_welcome_on_confirm();
