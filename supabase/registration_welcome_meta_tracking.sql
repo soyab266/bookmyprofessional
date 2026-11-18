@@ -12,8 +12,28 @@
 alter table public.notification_outbox
   add column if not exists meta_message_id text,
   add column if not exists delivery_status text,
+  add column if not exists delivery_status_rank smallint,
   add column if not exists delivery_status_at timestamptz,
   add column if not exists delivery_error text;
+
+-- delivery_status_rank powers an ATOMIC forward-only guard: status writes
+-- carry a WHERE delivery_status_rank IS NULL OR < incoming rank, evaluated
+-- under Postgres's row lock, so concurrent webhook handlers cannot regress
+-- a row (delivered -> sent) no matter how they interleave. Rank mapping
+-- lives in src/lib/meta-tracking.js (sent=1, delivered=2, read=3, failed=4).
+
+-- Backfill ranks for rows that already carry a delivery_status from before
+-- this column existed; without it a NULL rank would let any later event
+-- (even a stale one) pass the guard and regress the row.
+update public.notification_outbox
+set delivery_status_rank = case delivery_status
+  when 'sent' then 1
+  when 'delivered' then 2
+  when 'read' then 3
+  when 'failed' then 4
+  else 0
+end
+where delivery_status is not null and delivery_status_rank is null;
 
 -- Webhook status callbacks look rows up by the provider message id.
 create index if not exists notification_outbox_meta_message_id
@@ -34,3 +54,17 @@ create table if not exists public.meta_status_events (
 
 create index if not exists meta_status_events_meta_message_id
   on public.meta_status_events (meta_message_id);
+
+-- Same access convention as notification_outbox: RLS on, service role only,
+-- no client access. Staged rows hold only a wamid, status, timestamp and
+-- Meta's error - no message content, no recipient data - and are deleted on
+-- reconciliation; rows whose wamid never reconciles stay for manual review
+-- and manual cleanup (there is no automatic retention job yet).
+alter table public.meta_status_events enable row level security;
+
+create policy "service role full access"
+  on public.meta_status_events
+  for all
+  to service_role
+  using (true)
+  with check (true);
