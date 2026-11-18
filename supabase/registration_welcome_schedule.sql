@@ -2,7 +2,8 @@
 -- Registration welcome dispatch schedule: calls the already-deployed
 -- dispatcher route every 5 minutes through Supabase Cron (pg_cron + pg_net),
 -- authenticating with a secret held in Supabase Vault (never in this repo,
--- never in chat, never in a readable cron job definition).
+-- never in chat, never in SQL history, never in a readable job definition),
+-- with an owner-set daily and all-in accept cap enforced inside the job.
 --
 -- Why this design (reviewed 18 Nov 2026):
 --   - The Vercel team is on the Hobby plan. Vercel's own docs state Hobby
@@ -12,25 +13,43 @@
 --     existing POST + X-Internal-Secret route.
 --     Source: https://vercel.com/docs/cron-jobs/manage-cron-jobs
 --   - Verified live on the production project (18 Nov): supabase_vault 0.3.1
---     is ALREADY INSTALLED; pg_cron 1.6.4 and pg_net 0.20.4 are available
---     (not yet enabled). The dispatcher route
+--     is ALREADY INSTALLED with a dashboard Secrets UI; pg_cron 1.6.4 and
+--     pg_net 0.20.4 are available (not yet enabled). The dispatcher route
 --     /api/notifications/registration-welcome is deployed (POST +
 --     X-Internal-Secret) and INTERNAL_SECRET exists in Vercel Production env.
 --
--- SECRET HANDLING (no secret in any artifact):
---   The INTERNAL_SECRET value is stored in Supabase Vault under the name
---   'bmp_internal_secret' by the OWNER, at apply time, in their own Supabase
---   dashboard SQL editor:
---     select vault.create_secret(
---       '<current INTERNAL_SECRET value>', 'bmp_internal_secret',
---       'Dispatcher route secret for registration welcome cron');
---   The value passes only through the owner's own dashboard (its SQL history
---   entry can be deleted afterward). The cron job below reads it through the
---   vault.decrypted_secrets reference - the job definition itself contains
---   only the secret NAME. vault.decrypted_secrets is readable by database
---   owner roles (the owner themselves), which is accepted.
---   If INTERNAL_SECRET is ever rotated in Vercel (not part of this work),
---   the vault secret must be updated or dispatch stops with 401s.
+-- SECRET HANDLING (no secret in any artifact, history, or readable job):
+--   At activation the existing INTERNAL_SECRET is stored as Vault secret
+--   'bmp_internal_secret' through the dashboard's Vault > Secrets > "Add new
+--   secret" form (Name / Description / masked Secret value). The value is
+--   filled from the owner's Instinct vault entry
+--   "BMP INTERNAL_SECRET (production dispatcher)" via the secure vault-fill
+--   flow: the owner approves the fill on supabase.com through the vault
+--   approval link, the value is typed by the vault, and it is never read,
+--   copied, pasted, or retrieved by anyone. No SQL editor statement and no
+--   SQL history ever contains the value. Rotation is NOT part of this work.
+--   The cron job below reads the secret through the vault.decrypted_secrets
+--   reference - the job definition contains only the secret NAME.
+--   vault.decrypted_secrets is readable by database owner roles (the owner
+--   themselves), which is accepted.
+--   If INTERNAL_SECRET is ever rotated in Vercel (separate decision), the
+--   Vault secret must be re-saved or dispatch stops with 401s.
+--
+-- BUDGET ENFORCEMENT (inside the job, no code changes):
+--   The job POSTs only while BOTH caps hold, counting rows the dispatcher
+--   marked 'accepted'. Counting accepted is a CONSERVATIVE proxy for spend:
+--   Meta charges on delivery, so accepted >= actually charged.
+--     Daily cap:  accepts since the start of the current IST day.
+--     All-in cap: accepts since the outbox began.
+--   The cap NUMBERS (<DAILY-ACCEPT-CAP> / <ALL-IN-ACCEPT-CAP>) are chosen by
+--   the owner at activation - e.g. at base Rs0.115 per delivered Utility
+--   message, 25/day and 500 all-in bound spend to about Rs2.9/day and
+--   Rs57.50 all-in before tax. When a cap is reached the job silently skips
+--   until the next IST day (daily) or until the cap is raised (all-in);
+--   queued rows simply stay pending and nothing is lost.
+--   Separately, the account is prepaid (Rs100 available, UPI-funded,
+--   verified 18 Nov): Meta deducts per delivered message from available
+--   funds, which bounds total exposure to the funded balance.
 --
 -- pg_net behavior relied on (Supabase docs):
 --   net.http_post is asynchronous fire-and-forget; responses land in
@@ -39,21 +58,26 @@
 --   for a Vercel cold start, so 30000 ms is set explicitly. A dropped or
 --   failed call degrades safely in the dispatcher: a row claimed mid-send
 --   is swept to 'uncertain' after 10 minutes and HELD (never auto-resent);
---   pending rows are retried up to 5 attempts then marked failed. No
---   duplicate-send or stuck-queue hazard.
+--   pending rows are retried up to 5 attempts then marked failed.
 --   Source: https://supabase.com/docs/guides/database/extensions/pg_net
+--
+-- CADENCE: one authenticated POST every 5 minutes = 288/day (~8.6k/month).
+--   Observed on the Vercel Hobby usage meter (18 Nov): Function Invocations
+--   113K / 1M per 30 days, so the added calls are under 1% of the plan
+--   quota. An empty queue costs one cheap indexed read per run.
 --
 -- REVERSAL (full):
 --   select cron.unschedule('registration-welcome-dispatch');
---   -- optional: delete from vault.secrets where name = 'bmp_internal_secret';
+--   -- optional: delete the 'bmp_internal_secret' entry in Vault > Secrets;
 --   -- optional: drop extension pg_net; drop extension pg_cron;
 -- Queued rows stay pending and unsent once unscheduled.
 
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
--- Applied verbatim at activation time (no placeholder - the secret value is
--- resolved from Supabase Vault at run time, not stored here):
+-- Applied verbatim at activation time, with only the two cap NUMBERS chosen
+-- by the owner (the secret value is resolved from Supabase Vault at run
+-- time, never written here):
 --
 -- select cron.schedule(
 --   'registration-welcome-dispatch',
@@ -71,7 +95,13 @@ create extension if not exists pg_net;
 --     ),
 --     body := '{}'::jsonb,
 --     timeout_milliseconds := 30000
---   ) as request_id;
+--   ) as request_id
+--   where (select count(*) from public.notification_outbox
+--            where status = 'accepted'
+--              and accepted_at >= (date_trunc('day', now() at time zone 'Asia/Kolkata')
+--                                  at time zone 'Asia/Kolkata')) < <DAILY-ACCEPT-CAP>
+--     and (select count(*) from public.notification_outbox
+--            where status = 'accepted') < <ALL-IN-ACCEPT-CAP>;
 --   $$
 -- );
 
