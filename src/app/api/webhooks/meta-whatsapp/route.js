@@ -5,6 +5,7 @@ import {
   verifyMetaWebhookSignature,
   splitMetaWebhookPayload,
   recordMetaStatusUpdate,
+  stageMetaStatusEvent,
 } from '@/lib/meta-tracking';
 
 /**
@@ -12,6 +13,10 @@ import {
  *
  * GET  - Meta's endpoint verification challenge (one-time, on config save).
  * POST - status events for messages we sent (sent/delivered/read/failed).
+ *        A status whose wamid no outbox row holds yet (webhook/acceptance
+ *        race, or pre-tracking sends) is STAGED durably and reconciled when
+ *        the acceptance row is written - never dropped. Duplicates and
+ *        out-of-order events are skipped by a forward-only rank guard.
  *        Inbound customer message content arriving in the same payload is
  *        counted and DISCARDED, never persisted.
  *
@@ -74,9 +79,25 @@ export async function POST(req) {
     process.env.SUPABASE_SERVICE_ROLE_KEY
   );
   let matched = 0;
+  let stale = 0;
+  let staged = 0;
   for (const update of statuses) {
     const result = await recordMetaStatusUpdate(supabase, update);
-    if (result.matched) matched++;
+    if (result.matched && result.applied !== false) {
+      matched++;
+    } else if (result.matched) {
+      // Duplicate or out-of-order: row already at a further-along state.
+      stale++;
+    } else {
+      // No row holds this wamid yet (webhook/acceptance race or pre-tracking
+      // send): stage durably for reconciliation instead of dropping.
+      const s = await stageMetaStatusEvent(supabase, update);
+      if (s.staged) {
+        staged++;
+      } else {
+        console.error('[MetaTracking] unmatched status event could not be staged; reason:', s.reason);
+      }
+    }
   }
-  return NextResponse.json({ received: true, statuses: statuses.length, matched });
+  return NextResponse.json({ received: true, statuses: statuses.length, matched, stale, staged });
 }
