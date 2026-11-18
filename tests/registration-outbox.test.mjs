@@ -17,6 +17,9 @@ import { META_TEMPLATE } from '../src/lib/meta-whatsapp-templates.js';
 function mockSupabase(initialRows = [], profiles = 'auto', opts = {}) {
   const rows = initialRows.map((r, i) => ({ id: r.id || `row-${i + 1}`, attempts: 0, ...r }));
   let inserted = 0;
+  // In-memory mirror of the single-row budget counter the reserve/release
+  // RPCs maintain in production (supabase/registration_welcome_budget.sql).
+  const budget = { daily_used: 0, total_used: 0, daily_cap: 25, total_cap: 500, ...(opts.budget || {}) };
 
   function applyFilters(data, filters) {
     return data.filter((row) =>
@@ -105,6 +108,26 @@ function mockSupabase(initialRows = [], profiles = 'auto', opts = {}) {
       // make the builder awaitable
       builder[Symbol.asyncIterator] = undefined;
       return builder;
+    },
+    budget,
+    async rpc(name) {
+      assert.ok(
+        name === 'reserve_welcome_send' || name === 'release_welcome_send',
+        `unexpected rpc ${name}`
+      );
+      if (opts.rpcError) return { data: null, error: { message: 'rpc failed' } };
+      if (name === 'reserve_welcome_send') {
+        if (budget.total_used >= budget.total_cap || budget.daily_used >= budget.daily_cap) {
+          return { data: false, error: null };
+        }
+        budget.daily_used++;
+        budget.total_used++;
+        return { data: true, error: null };
+      }
+      // release_welcome_send: never drops below zero (mirrors greatest(...,0))
+      budget.daily_used = Math.max(0, budget.daily_used - 1);
+      budget.total_used = Math.max(0, budget.total_used - 1);
+      return { data: null, error: null };
     },
   };
   return api;
@@ -461,15 +484,12 @@ test('accepted send with failed status persistence never returns the row to pend
   assert.equal(row.status, 'sending', 'row stays claimed; the stale sweep later holds it as uncertain - it can never return to pending and be resent automatically');
 });
 
-// --- Budget caps (message volume, never rupees) ----------------------------
-
-function acceptedSeedRows(n) {
-  return Array.from({ length: n }, (_, i) => ({
-    id: `cap-${i}`,
-    status: 'accepted',
-    accepted_at: new Date().toISOString(),
-  }));
-}
+// --- Budget caps: atomic reservation (message volume, never rupees) --------
+// Semantics mirror supabase/registration_welcome_budget.sql: reserve BEFORE
+// claim; KEPT on accepted AND uncertain (a held, possibly-real send consumes
+// budget); RELEASED only when Meta was definitely never reached (claim lost,
+// simulated, not-attempted incl. validation failures). Over-cap or reserve
+// error fails closed: no sends, row stays pending, no attempt burned.
 
 const CAP_PENDING = {
   id: 'cap-pending',
@@ -480,8 +500,8 @@ const CAP_PENDING = {
   created_at: new Date().toISOString(),
 };
 
-test('dispatch stops claiming when the daily accept cap is reached; rows stay pending, no attempts burned', async () => {
-  const sb = mockSupabase([...acceptedSeedRows(25), CAP_PENDING]);
+test('dispatch stops when the atomic reservation is denied (cap reached); row stays pending, no attempt burned', async () => {
+  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 25 } });
   let sends = 0;
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => { sends++; return { success: true }; },
@@ -491,37 +511,78 @@ test('dispatch stops claiming when the daily accept cap is reached; rows stay pe
   const row = sb.rows.find((r) => r.id === 'cap-pending');
   assert.equal(row.status, 'pending', 'capped row stays pending for a later run');
   assert.equal(row.attempts, 0, 'capped row burns no attempt');
+  assert.equal(sb.budget.daily_used, 25, 'denied reservation consumes nothing');
 });
 
-test('dispatch counts in-flight sending rows toward the cap (concurrent runs see each other)', async () => {
-  const sb = mockSupabase([
-    ...acceptedSeedRows(24),
-    { id: 'cap-inflight', status: 'sending', updated_at: new Date().toISOString() },
-    CAP_PENDING,
-  ]);
+test('dispatch fails closed (no sends) when the reservation RPC errors', async () => {
+  const sb = mockSupabase([CAP_PENDING], 'auto', { rpcError: true });
   let sends = 0;
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => { sends++; return { success: true }; },
   });
-  assert.equal(sends, 0, '24 accepted + 1 in-flight = daily cap 25, so no send');
-  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 1 });
-});
-
-test('dispatch fails closed (no sends) when a budget count cannot be read', async () => {
-  const sb = mockSupabase([CAP_PENDING], 'auto', { countError: true });
-  let sends = 0;
-  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
-    sendImpl: async () => { sends++; return { success: true }; },
-  });
-  assert.equal(sends, 0, 'unreadable budget means no sends this run');
+  assert.equal(sends, 0, 'reserve error means no sends this run');
   assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 1 });
   assert.equal(sb.rows.find((r) => r.id === 'cap-pending').status, 'pending');
 });
 
-test('dispatch under the caps still sends normally', async () => {
+test('accepted send KEEPS the reservation (consumes budget)', async () => {
   const sb = mockSupabase([CAP_PENDING]);
   const summary = await dispatchRegistrationWelcomeOutbox(sb, {
     sendImpl: async () => ({ success: true }),
   });
   assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
+  assert.equal(sb.budget.daily_used, 1, 'an accepted send consumes its slot');
+  assert.equal(sb.budget.total_used, 1);
+});
+
+test('uncertain outcome KEEPS the reservation (held, possibly-real send consumes budget)', async () => {
+  const sb = mockSupabase([CAP_PENDING]);
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: false, error: 'network_dropped_after_request' }),
+  });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 1, capped: 0 });
+  assert.equal(sb.budget.daily_used, 1, 'a held uncertain attempt keeps its slot');
+  assert.equal(sb.rows.find((r) => r.id === 'cap-pending').status, 'uncertain');
+});
+
+test('not-attempted outcome RELEASES the reservation (Meta never reached)', async () => {
+  const sb = mockSupabase([CAP_PENDING]);
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: false, skipped: 'missing_credentials' }),
+  });
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 1, uncertain: 0, capped: 0 });
+  assert.equal(sb.budget.daily_used, 0, 'slot returned: nothing was sent');
+  assert.equal(sb.rows.find((r) => r.id === 'cap-pending').status, 'pending');
+});
+
+test('validation failure RELEASES the reservation and marks the row failed', async () => {
+  const sb = mockSupabase([CAP_PENDING]);
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: false, error: 'validation_failed: bad template' }),
+  });
+  assert.deepEqual(summary, { accepted: 0, failed: 1, skipped: 0, uncertain: 0, capped: 0 });
+  assert.equal(sb.budget.daily_used, 0, 'slot returned: Meta was never reached');
+});
+
+test('reservation under both caps still sends normally', async () => {
+  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 24, total_used: 499 } });
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => ({ success: true }),
+  });
+  assert.deepEqual(summary, { accepted: 1, failed: 0, skipped: 0, uncertain: 0, capped: 0 });
+  assert.deepEqual(
+    { daily: sb.budget.daily_used, total: sb.budget.total_used },
+    { daily: 25, total: 500 },
+    'the last available slot is taken exactly once'
+  );
+});
+
+test('reservation denied when the ALL-IN cap is reached even with daily room', async () => {
+  const sb = mockSupabase([CAP_PENDING], 'auto', { budget: { daily_used: 0, total_used: 500 } });
+  let sends = 0;
+  const summary = await dispatchRegistrationWelcomeOutbox(sb, {
+    sendImpl: async () => { sends++; return { success: true }; },
+  });
+  assert.equal(sends, 0);
+  assert.deepEqual(summary, { accepted: 0, failed: 0, skipped: 0, uncertain: 0, capped: 1 });
 });
