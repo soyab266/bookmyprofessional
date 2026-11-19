@@ -275,6 +275,11 @@ export function AuthProvider({ children }) {
       const targetUrl = new URL("/api/auth/google", window.location.origin);
       targetUrl.searchParams.set("role", role);
       targetUrl.searchParams.set("next", next);
+      // Optional WhatsApp opt-in from the register form; carried through the
+      // signed OAuth state to the callback (see /api/auth/google).
+      if (options.whatsappConsent === true) {
+        targetUrl.searchParams.set("wa", "1");
+      }
       window.location.href = targetUrl.toString();
       return;
     }
