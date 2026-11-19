@@ -36,6 +36,8 @@ export async function GET(request) {
 
   const requestedRole = stateData.role === 'professional' ? 'professional' : 'customer';
   const targetNext = stateData.next;
+  // WhatsApp opt-in from the register form, carried through the signed state.
+  const whatsappConsent = stateData.whatsapp_consent === true;
 
   let tokens;
   let googleUser;
@@ -118,6 +120,11 @@ export async function GET(request) {
           full_name: fullName,
           role: resolvedRole,
           avatar_url: avatarUrl,
+          // New accounts only: handle_new_user copies this into profiles, so
+          // the registrant's opt-in is stored at account creation. An
+          // existing user's consent is never touched by a later sign-in -
+          // a later opt-in flow for existing accounts is a separate change.
+          ...(existingProfile ? {} : { whatsapp_consent: whatsappConsent }),
         },
       },
     });
@@ -174,6 +181,10 @@ export async function GET(request) {
       phone: existingProfile?.phone || '',
       city: existingProfile?.city || '',
       address: existingProfile?.address || '',
+      // Existing accounts: preserve their stored consent exactly as-is
+      // (never granted, never cleared by a later Google sign-in). Only
+      // brand-new profiles take the opt-in captured on the register form.
+      whatsapp_consent: existingProfile ? existingProfile.whatsapp_consent : whatsappConsent,
     });
 
     // 7. If professional, guarantee row in professionals table exists
