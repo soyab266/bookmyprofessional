@@ -10,7 +10,11 @@
 //
 // No network calls happen here; use meta-whatsapp.js to send.
 
+import { formatMoney } from './money.js';
+
 export const META_TEMPLATE = Object.freeze({
+  BOOKING_DETAILS: 'bmp_booking_details_v2',
+  PRO_BOOKING_DETAILS: 'bmp_professional_booking_details_v2',
   BOOKING_RECEIVED: 'bmp_booking_received',
   PRO_BOOKING_REQUEST: 'bmp_professional_booking_request',
   CUSTOMER_REGISTRATION: 'bmp_customer_registration_received',
@@ -19,6 +23,8 @@ export const META_TEMPLATE = Object.freeze({
 
 // Number of body text parameters each approved template expects.
 export const META_TEMPLATE_PARAM_COUNT = Object.freeze({
+  [META_TEMPLATE.BOOKING_DETAILS]: 7,
+  [META_TEMPLATE.PRO_BOOKING_DETAILS]: 8,
   [META_TEMPLATE.BOOKING_RECEIVED]: 5,
   [META_TEMPLATE.PRO_BOOKING_REQUEST]: 5,
   [META_TEMPLATE.CUSTOMER_REGISTRATION]: 1,
@@ -185,4 +191,42 @@ export function buildProfessionalRegistrationReceived({ to, professionalName }) 
     templateName: META_TEMPLATE.PRO_REGISTRATION,
     bodyParams: [professionalName || 'Professional'],
   });
+}
+
+// Fuller Utility/English versions approved on production WABA2609598592879698
+// on19Nov2026. Legacy builders remain unchanged for compatibility/rollback.
+// Fail closed on incomplete verified receipts rather than inventing amount/address.
+function bookingDetailFields(booking) {
+  if (!booking || !String(booking.id || '').trim() ||
+      !String(booking.service_title || '').trim() ||
+      !String(booking.address || '').trim() ||
+      booking.total_paid === null || booking.total_paid === undefined ||
+      String(booking.total_paid).trim() === '' ||
+      !Number.isFinite(Number(booking.total_paid)) || Number(booking.total_paid) < 0) return null;
+  const date = booking.date || booking.scheduled_at;
+  if (!date || !Number.isFinite(new Date(date).getTime())) return null;
+  const time = String(booking.time_slot || toISTTime(booking.scheduled_at || '')).trim();
+  if (!time) return null;
+  return [String(booking.id), booking.service_title, toISTDate(date), time,
+    booking.address, formatMoney(booking.total_paid)];
+}
+
+// Approved body order: name, ID, service, date, time IST, address, total paid.
+export function buildCustomerBookingDetails({ to, customerName, booking }) {
+  const fields = bookingDetailFields(booking);
+  if (!fields) return null;
+  return buildTemplateMessage({ to, templateName: META_TEMPLATE.BOOKING_DETAILS,
+    bodyParams: [customerName || 'Customer', ...fields] });
+}
+
+// Approved body order: pro name, ID, service, customer contact, date, time IST,
+// address, booking amount. Amount is TOTAL CUSTOMER PAYMENT, never net payout.
+// Contact is read fresh for the assigned professional only, not stored in receipt.
+export function buildProfessionalBookingDetails({ to, professionalName, customer, booking }) {
+  const fields = bookingDetailFields(booking);
+  if (!fields || !customer || !booking.customer_id ||
+      String(customer.id) !== String(booking.customer_id)) return null;
+  const contact = `${customer.full_name || 'Customer'}${customer.phone ? ` (${customer.phone})` : ''}`;
+  return buildTemplateMessage({ to, templateName: META_TEMPLATE.PRO_BOOKING_DETAILS,
+    bodyParams: [professionalName || 'Professional', fields[0], fields[1], contact, ...fields.slice(2)] });
 }
