@@ -76,18 +76,18 @@ test('WhatsApp notification senders respect consent gates', async () => {
   assert.equal(await sendPayoutPaidWhatsApp(noConsentProfile, mockPayout), false);
 });
 
-test('WhatsApp notification senders succeed in test environment when consented', async () => {
+test('legacy WhatsApp senders remain disabled even in simulation when consented', async () => {
   const consentedProfile = { full_name: 'Suresh Kumar', phone: '9876543210', whatsapp_consent: true };
   const mockBooking = { id: 'BMP-1002', service_title: 'Full Plumbing Inspection', date: '2026-11-02', time_slot: '02:00 PM' };
   const mockPayout = { id: 'PAY-2002', amount: 5000, method: 'UPI (9876543210@upi)' };
 
-  assert.equal(await sendBookingConfirmationWhatsApp(consentedProfile, mockBooking, 'customer'), true);
-  assert.equal(await sendBookingConfirmationWhatsApp(consentedProfile, mockBooking, 'professional'), true);
-  assert.equal(await sendBookingCompletedWhatsApp(consentedProfile, mockBooking), true);
-  assert.equal(await sendBookingCancellationWhatsApp(consentedProfile, mockBooking, 'customer'), true);
-  assert.equal(await sendRefundProcessedWhatsApp(consentedProfile, mockBooking, 2500), true);
-  assert.equal(await sendPayoutRequestedWhatsApp(consentedProfile, mockPayout), true);
-  assert.equal(await sendPayoutPaidWhatsApp(consentedProfile, mockPayout), true);
+  assert.equal(await sendBookingConfirmationWhatsApp(consentedProfile, mockBooking, 'customer'), false);
+  assert.equal(await sendBookingConfirmationWhatsApp(consentedProfile, mockBooking, 'professional'), false);
+  assert.equal(await sendBookingCompletedWhatsApp(consentedProfile, mockBooking), false);
+  assert.equal(await sendBookingCancellationWhatsApp(consentedProfile, mockBooking, 'customer'), false);
+  assert.equal(await sendRefundProcessedWhatsApp(consentedProfile, mockBooking, 2500), false);
+  assert.equal(await sendPayoutRequestedWhatsApp(consentedProfile, mockPayout), false);
+  assert.equal(await sendPayoutPaidWhatsApp(consentedProfile, mockPayout), false);
 });
 
 test('dispatchBookingConfirmedNotifications prevents duplicate confirmation dispatches', async () => {
