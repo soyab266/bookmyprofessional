@@ -1,4 +1,4 @@
-// Server-only WhatsApp notification via Brevo (WhatsApp channel).
+// Server-only legacy WhatsApp helpers. Brevo WhatsApp transport is disabled.
 // Never import from a client component.
 import { formatMoney } from './money.js';
 
@@ -61,59 +61,16 @@ export function hasWhatsAppConsent(profile) {
 }
 
 /**
- * Send a WhatsApp message via Brevo.
- * Returns true on success, false on failure (never throws).
- *
- * @param {object} opts
- * @param {string} opts.to   - Phone number
- * @param {string} opts.body - Text message body
+ * Legacy Brevo WhatsApp transport is deliberately disabled.
+ * Keep the false/no-throw contract so existing booking, refund and payout
+ * operations continue without their old WhatsApp side effect. This also blocks
+ * confirmation, cancellation, completion and reminder alerts, in every env.
+ * Brevo email and the separate Meta registration/booking outboxes are unchanged.
+ * Do not add an environment bypass: re-enabling needs a reviewed, authenticated,
+ * bounded event path rather than restoring the old unrestricted transport.
  */
-export async function sendWhatsApp({ to, body }) {
-  const normalisedTo = normalisePhoneNumber(to);
-  if (!normalisedTo || !body) {
-    return false;
-  }
-
-  // Simulated mode in test environment
-  if (process.env.NODE_ENV === 'test' || process.env.BREVO_SIMULATE === 'true') {
-    return true;
-  }
-
-  const apiKey = process.env.BREVO_API_KEY;
-  if (!apiKey) {
-    return false;
-  }
-
-  const senderNumber = String(BMP_PHONE).replace(/\D/g, '');
-
-  try {
-    const res = await fetch('https://api.brevo.com/v3/whatsapp/sendMessage', {
-      method: 'POST',
-      headers: {
-        'api-key': apiKey,
-        'Content-Type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify({
-        senderNumber,
-        contactNumbers: [normalisedTo],
-        text: body,
-      }),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      console.warn(
-        `[WhatsApp] Brevo dispatch warning (${res.status}): ${errText || res.statusText}. ` +
-        `Ensure WhatsApp Business Account (WABA) is active in Brevo dashboard.`
-      );
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error('[WhatsApp] sendWhatsApp error:', err?.message || err);
-    return false;
-  }
+export async function sendWhatsApp() {
+  return false;
 }
 
 /**
