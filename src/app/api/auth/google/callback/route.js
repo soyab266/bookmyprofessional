@@ -226,7 +226,15 @@ export async function GET(request) {
       ? targetNext
       : defaultTarget;
 
-    const response = NextResponse.redirect(`${origin}${destination}`);
+    // Brand-new Google accounts have no phone (Google does not share one):
+    // collect it immediately so the profile is complete and an opted-in
+    // WhatsApp welcome can find its number. Existing users signing in again
+    // keep their previous behavior and never see this step.
+    const finalDestination = existingProfile
+      ? destination
+      : `/complete-profile?next=${encodeURIComponent(destination)}`;
+
+    const response = NextResponse.redirect(`${origin}${finalDestination}`);
 
     // Clean up oauth state cookie
     response.cookies.set('bmp_google_oauth_state', '', {
