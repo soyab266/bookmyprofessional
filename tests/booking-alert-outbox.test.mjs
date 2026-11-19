@@ -4,10 +4,11 @@ import { readFileSync } from 'node:fs';
 import { bookingAlertsEnabled, confirmVerifiedPaidBooking, dispatchBookingAlerts } from '../src/lib/booking-alert-outbox.js';
 const profile={id:'u',full_name:'Example',phone:'9000000001',whatsapp_consent:true};
 const row={id:'q',booking_id:'B',pilot_expires_at:'2099-01-01T00:00:00Z',claim_token:'token',user_id:'u',recipient_role:'customer',template:'bmp_booking_received',recipient_phone:profile.phone,booking:{id:'B',service_title:'Cleaning',date:'2026-11-21',time_slot:'3 PM'}};
-function db({p=profile,rows=[row],profileError=null,claimError=null,finishError=null,booking={id:'B',payment_status:'paid',status:'upcoming',date:'2026-11-21',time_slot:'3 PM',service_title:'Cleaning'}}={}) {
+function db({p=profile,rows=[row],profileError=null,claimError=null,finishError=null,scope=true,scopeError=null,booking={id:'B',payment_status:'paid',status:'upcoming',date:'2026-11-21',time_slot:'3 PM',service_title:'Cleaning'}}={}) {
  const finished=[];let claims=0;
  return {finished,get claims(){return claims},from(table){assert.ok(['profiles','bookings'].includes(table));return {select(){return this},eq(){return this},async maybeSingle(){return table==='bookings'?{data:booking}:{data:p,error:profileError}}}},async rpc(name,args){
   if(name==='expand_booking_alert_receipts')return {data:{expanded:0,errors:0}};
+  if(name==='booking_alert_scope_allows')return {data:scope,error:scopeError};
   if(name==='claim_booking_alert'){claims++;return {data:rows.shift()||null,error:claimError}}
   assert.equal(name,'finish_booking_alert');finished.push(args);return {data:!finishError,error:finishError};
  }};
@@ -31,6 +32,7 @@ test('isolated dispatcher outcome and privacy checks',async t=>{
  await t.test('claim failure fails closed',async()=>{const r=await run({claimError:{message:'fail'}});assert.equal(r.sends,0);assert.equal(r.summary.error,'booking_claim_failed')});
  await t.test('cancelled booking is skipped',async()=>{const r=await run({booking:{payment_status:'paid',status:'cancelled'}});assert.equal(r.sends,0);assert.equal(r.finish.p_release,true)});
  await t.test('expired pilot between claim and send is skipped',async()=>{const r=await run({rows:[{...row,pilot_expires_at:'2020-01-01T00:00:00Z'}]});assert.equal(r.sends,0);assert.equal(r.finish.p_release,true)});
+ for(const opts of [{scope:false},{scope:null},{scopeError:{message:'unavailable'}}])await t.test('scope denied or unavailable prevents request '+JSON.stringify(opts),async()=>{const r=await run(opts);assert.equal(r.sends,0);assert.equal(r.finish.p_status,'skipped');assert.equal(r.finish.p_release,true)});
  await t.test('null claim ends run without send',async()=>{const r=await run({rows:[]});assert.equal(r.sends,0)});
  delete process.env.META_WHATSAPP_BOOKINGS_ENABLED;
 });
