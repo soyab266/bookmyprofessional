@@ -194,7 +194,7 @@ export default function RegisterPage() {
     try {
       setIsLoading(true);
       const target = authRole === "professional" ? "/vendor" : "/dashboard";
-      await loginWithProvider(provider.toLowerCase(), { role: authRole, next: target });
+      await loginWithProvider(provider.toLowerCase(), { role: authRole, next: target, whatsappConsent: form.agreeWhatsApp });
     } catch (err) {
       setErrorMessage(err.message || `Failed to sign up with ${provider}.`);
       setIsLoading(false);
@@ -669,6 +669,22 @@ export default function RegisterPage() {
             </svg>
             <span>Continue with Google</span>
           </button>
+
+          {/* Same opt-in as the email form above: Google sign-up collects no
+              phone or consent on its own, so the choice is taken here and
+              carried through the OAuth state. Bound to the same state, both
+              checkboxes stay in sync. */}
+          <label className="mt-3 flex items-start gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={form.agreeWhatsApp}
+              onChange={(e) => setForm({ ...form, agreeWhatsApp: e.target.checked })}
+              className="mt-0.5 rounded text-primary-500 focus:ring-primary-500 h-4 w-4 shrink-0 cursor-pointer"
+            />
+            <span className="text-[11px] text-dark-600 leading-tight">
+              (Optional) Opt in to receive booking updates, appointment reminders, and other relevant notifications through WhatsApp. This also applies when you continue with Google.
+            </span>
+          </label>
 
           <p className="text-xs text-center text-dark-500">
             Already have an account?{" "}
