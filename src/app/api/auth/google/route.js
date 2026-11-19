@@ -6,6 +6,9 @@ export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const role = searchParams.get('role') === 'professional' ? 'professional' : 'customer';
+    // Optional WhatsApp opt-in captured on the register form; stored in the
+    // signed state so the callback can trust it.
+    const whatsappConsent = searchParams.get('wa') === '1';
     const defaultNext = role === 'professional' ? '/vendor' : '/dashboard';
     const nextParam = searchParams.get('next');
     const next = (nextParam && nextParam !== '/' && nextParam !== '/login' && nextParam !== '/register')
@@ -27,6 +30,7 @@ export async function GET(request) {
       nonce,
       role,
       next,
+      whatsapp_consent: whatsappConsent,
       iat: Date.now(),
     };
     const stateToken = signState(statePayload);
