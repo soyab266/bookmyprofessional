@@ -1,3 +1,4 @@
+import { bookingNeedsVerificationReview } from './professional-booking-eligibility.js';
 // Display-truth labels for a booking's payment state.
 // Rule: never describe money as received unless payment_status says so.
 
@@ -21,6 +22,7 @@ export function getBookingPaymentLabel(booking) {
 // that an unpaid booking is never presented as a confirmed upcoming one.
 export function getBookingStatusLabel(booking, derivedStatus) {
   const derived = derivedStatus || "";
+  if (bookingNeedsVerificationReview(booking)) return "Verification review required";
   if (derived === "upcoming" && booking && booking.paymentStatus === "unpaid") {
     return "Payment pending";
   }
