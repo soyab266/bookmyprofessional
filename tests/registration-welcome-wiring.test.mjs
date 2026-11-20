@@ -144,8 +144,8 @@ test('dispatcher route fails CLOSED when INTERNAL_SECRET is not configured', () 
 
 test('dispatcher route uses the service role and the reviewed dispatcher', () => {
   assert.match(routeSrc, /SUPABASE_SERVICE_ROLE_KEY/);
-  assert.match(routeSrc, /dispatchRegistrationWelcomeOutbox/);
-  assert.match(routeSrc, /@\/lib\/registration-outbox/);
+  assert.match(routeSrc, /dispatchDailyRegistrationWelcome/);
+  assert.match(routeSrc, /@\/lib\/registration-welcome-daily/);
 });
 
 test('dispatcher route maps a queue read failure to 503, not a healthy 200', () => {

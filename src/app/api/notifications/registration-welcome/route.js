@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { dispatchRegistrationWelcomeOutbox } from '@/lib/registration-outbox';
+import { dispatchDailyRegistrationWelcome } from '@/lib/registration-welcome-daily';
 
 /**
  * POST /api/notifications/registration-welcome
@@ -25,7 +25,7 @@ export async function POST(req) {
       process.env.NEXT_PUBLIC_SUPABASE_URL,
       process.env.SUPABASE_SERVICE_ROLE_KEY
     );
-    const result = await dispatchRegistrationWelcomeOutbox(supabase);
+    const result = await dispatchDailyRegistrationWelcome(supabase);
     // A queue read failure must look unhealthy to monitoring: 503, not a
     // healthy-looking 200 with zero counts.
     if (result?.error) {
