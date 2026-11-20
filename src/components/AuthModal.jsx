@@ -185,6 +185,12 @@ export default function AuthModal() {
       setErrorMessage("Please accept the Terms of Service & Privacy Policy");
       return;
     }
+    if (!signupForm.agreeWhatsApp) {
+      setErrorMessage(
+        "Please agree to receive WhatsApp updates from BookMyProfessional to continue. You can turn them off anytime in Settings."
+      );
+      return;
+    }
     if (authRole === "professional") {
       const availableSubs = subcategories[signupForm.category] || [];
       if (availableSubs.length > 0 && !signupForm.subcategory?.trim()) {
@@ -871,7 +877,9 @@ export default function AuthModal() {
                           className="mt-0.5 rounded border-border text-primary-500 focus:ring-primary-500 h-3.5 w-3.5 shrink-0 cursor-pointer"
                         />
                         <span className="text-[11px] text-dark-600 leading-tight">
-                          (Optional) Receive booking updates, reminders, and notifications via WhatsApp.
+                          I agree to receive booking updates, reminders, and notifications from
+                          BookMyProfessional on WhatsApp. You can turn this off anytime in
+                          Settings. <span className="text-rose-500 font-medium">*</span>
                         </span>
                       </label>
                     </div>

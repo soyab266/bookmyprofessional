@@ -34,6 +34,11 @@ describe('google callback sends only brand-new accounts to the phone step', () =
     assert.match(callbackSrc, /\/complete-profile\?next=\$\{encodeURIComponent\(destination\)\}/);
   });
 
+  test('no editable URL marker carries authority: requirement comes from the durable profile state', () => {
+    assert.ok(!callbackSrc.includes('signup=1'), 'the callback must not mark signups via URL');
+    assert.match(callbackSrc, /never from a URL parameter/);
+  });
+
   test('the phone step applies exactly when there was no existing profile', () => {
     assert.match(callbackSrc, /const finalDestination = existingProfile\s*\?\s*destination\s*:\s*`\/complete-profile\?next=/);
   });
@@ -56,9 +61,10 @@ describe('complete-profile page', () => {
     assert.match(pageSrc, /<CompleteProfileClient \/>/);
   });
 
-  test('requires a session and never nags users who already have a number', () => {
+  test('requires a session and never nags completed or legacy-exempt accounts', () => {
     assert.match(clientSrc, /if \(!user\) \{\s*router\.replace\("\/login"\)/);
-    assert.match(clientSrc, /user\.phone && cleanPhone\(user\.phone\)\.length === 10/);
+    assert.match(clientSrc, /if \(!mustComplete\) \{\s*router\.replace\(destination\);/);
+    assert.match(clientSrc, /const hasPhone = Boolean\(user\?\.phone\) && cleanPhone\(user\.phone\)\.length === 10;/);
   });
 
   test('explains why the number is asked (Google does not share it)', () => {
@@ -87,19 +93,67 @@ describe('complete-profile page', () => {
     assert.match(clientSrc, /if \(!isValidIndianPhone\(phone\)\)/);
   });
 
-  test('saves only the phone through the user\'s own session, never consent', () => {
-    assert.match(clientSrc, /\.from\("profiles"\)\s*\.update\(\{ phone: cleanPhone\(phone\) \}\)\s*\.eq\("id", user\.id\)/);
-    const updateCall = clientSrc.slice(clientSrc.indexOf('.from("profiles")'), clientSrc.indexOf('.eq("id", user.id)'));
-    assert.ok(!updateCall.includes('whatsapp_consent'), 'the update must not touch whatsapp_consent');
+  test('saves the phone through the user\'s own session; consent only from the user\'s own tick', () => {
+    // Default payload is the phone only; whatsapp_consent is added solely when
+    // the checkbox was ticked by the user - never pre-ticked, never derived.
+    assert.match(clientSrc, /const update = \{\s*phone: cleanPhone\(phone\),\s*onboarding_completed_at: new Date\(\)\.toISOString\(\),\s*\};/);
+    assert.match(clientSrc, /if \(agreeWhatsApp\) update\.whatsapp_consent = true;/);
+    assert.match(clientSrc, /\.from\("profiles"\)\s*\.update\(update\)\s*\.eq\("id", user\.id\)/);
+    assert.match(clientSrc, /const \[agreeWhatsApp, setAgreeWhatsApp\] = useState\(false\)/);
   });
 
-  test('skip path goes to the same sanitized destination', () => {
-    assert.match(clientSrc, /<Link href=\{destination\}[^>]*>\s*Skip for now/);
+  test('no skip path: a valid number is required to continue', () => {
+    assert.ok(!clientSrc.includes('Skip for now'), 'mandatory-number step must not offer a skip');
+    assert.ok(!clientSrc.includes('You can add it later from your dashboard'), 'no later-add footnote once the number is required');
+    assert.match(clientSrc, /A mobile number is required to continue/);
+    assert.match(clientSrc, /Save and continue/);
   });
 
   test('next is sanitized: internal only, no auth-page or self loops', () => {
     assert.match(clientSrc, /!raw\.startsWith\("\/"\) \|\| raw\.startsWith\("\/\/"\)/);
     assert.match(clientSrc, /raw === "\/login" \|\| raw === "\/register" \|\| raw\.startsWith\("\/complete-profile"\)/);
+  });
+});
+
+describe('required WhatsApp agreement on the phone step (owner decision, 20 Nov 2026)', () => {
+  test('consent already on file is untouched: no checkbox, notice only', () => {
+    assert.match(clientSrc, /const needsConsent = !user\?\.whatsapp_consent;/);
+    assert.match(clientSrc, /\{needsConsent && \(/);
+    assert.match(clientSrc, /\{user\.whatsapp_consent && \(/);
+  });
+
+  test('incomplete accounts must tick to continue; nothing is pre-ticked', () => {
+    assert.match(clientSrc, /const mustComplete = !onboardingComplete && \(needsPhone \|\| needsConsent\);/);
+    assert.match(clientSrc, /const consentRequired = mustComplete && needsConsent;/);
+    assert.match(clientSrc, /if \(consentRequired && !agreeWhatsApp\)/);
+    assert.match(clientSrc, /Please agree to receive WhatsApp updates from BookMyProfessional to continue/);
+    assert.match(clientSrc, /const \[agreeWhatsApp, setAgreeWhatsApp\] = useState\(false\)/);
+  });
+
+  test('the agreement names the business and the withdrawal path', () => {
+    assert.match(clientSrc, /from BookMyProfessional on WhatsApp at this number/);
+    assert.match(clientSrc, /turn this off anytime in Settings/);
+  });
+
+  test('completion is durable: saving sets the marker once, and only consent comes from the tick', () => {
+    assert.match(clientSrc, /onboarding_completed_at: new Date\(\)\.toISOString\(\)/);
+    assert.match(clientSrc, /if \(agreeWhatsApp\) update\.whatsapp_consent = true;/);
+    assert.ok(!clientSrc.includes('(Optional)'), 'incomplete new signups get no optional branch');
+  });
+
+  test('withdrawing consent never re-gates: the marker, not current consent, decides completion', () => {
+    assert.match(clientSrc, /const onboardingComplete = Boolean\(user\?\.onboarding_completed_at\);/);
+    assert.match(clientSrc, /if \(!mustComplete\) \{\s*router\.replace\(destination\);/);
+    assert.ok(!clientSrc.includes('if (!user?.whatsapp_consent) return'), 'no hard gate on consent alone');
+  });
+
+  test('already-consented users see the notice, not a duplicate agreement', () => {
+    assert.match(clientSrc, /\{user\.whatsapp_consent && \(/);
+    assert.match(clientSrc, /\{needsConsent && \(/);
+  });
+
+  test('a user who owes only the agreement gets their saved number prefilled, not retyped', () => {
+    assert.match(clientSrc, /if \(hasPhone\) setPhone\(\(current\) => current \|\| cleanPhone\(user\.phone\)\);/);
   });
 });
 

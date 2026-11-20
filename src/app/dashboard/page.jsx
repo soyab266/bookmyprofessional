@@ -40,6 +40,7 @@ import { getDerivedBookingStatus, isBookingExpired } from "@/lib/datetime";
 import { cleanPincode, isValidPincodeFormat } from "@/lib/pincode";
 import { cleanPhone, isValidIndianPhone } from "@/lib/phone";
 import PincodeInput from "@/components/PincodeInput";
+import WhatsAppConsentSettings from "@/components/WhatsAppConsentSettings";
 import { listMyWishlist, removeWish } from "@/lib/data/wishlist";
 
 export default function CustomerDashboardPage() {
@@ -58,6 +59,20 @@ export default function CustomerDashboardPage() {
     if (!isLoading && user) {
       if (user.role === 'professional') {
         router.replace('/vendor');
+        return;
+      }
+      // Onboarding enforcement (owner decision, 20 Nov 2026): a customer who
+      // has not completed onboarding (required number + required agreement)
+      // is sent to finish it before using the dashboard. Accounts completed
+      // once - including legacy accounts backfilled by the release migration
+      // - are never sent back, and consent withdrawal never re-gates.
+      // Client-side gate on the destination; direct API calls and other
+      // pages are not covered by this guard.
+      const hasValidPhone = cleanPhone(user.phone || "").length === 10;
+      const onboardingDone =
+        Boolean(user.onboarding_completed_at) || (hasValidPhone && user.whatsapp_consent);
+      if (!onboardingDone) {
+        router.replace("/complete-profile?next=/dashboard");
       }
     }
   }, [isLoading, user, router]);
@@ -922,6 +937,7 @@ export default function CustomerDashboardPage() {
                 </form>
 
                 <div className="mt-8 pt-8 border-t border-border max-w-xl space-y-4">
+                  <WhatsAppConsentSettings />
                   <div>
                     <h3 className="font-heading text-lg font-bold text-dark-900">
                       Notification Preferences

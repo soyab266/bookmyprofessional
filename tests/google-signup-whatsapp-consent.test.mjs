@@ -14,6 +14,16 @@ import { validateRecipient } from '../src/lib/meta-whatsapp-validate.js';
 // 19 Nov 2026: a Google-signup customer got no registration welcome because
 // the Google path never collected WhatsApp consent (and collects no phone).
 // This suite pins the fix: consent is captured for BOTH roles on the Google
+//
+// Follow-up (20 Nov): the checkbox below Continue with Google was removed on
+// owner request. Nothing is pre-ticked and removal itself grants no consent;
+// the email-form checkbox still drives form.agreeWhatsApp, and the Google
+// flow keeps forwarding that state unchanged.
+// Follow-up (20 Nov, owner: "Both compulsory", confirmed required-with-later-
+// withdrawal): the WhatsApp agreement is now REQUIRED to finish signup on the
+// register form, in the AuthModal signup, and at the post-Google phone step,
+// always as an unticked affirmative tick, with withdrawal in Settings. The
+// state/transport/callback pins below are unaffected.
 // path, carried through the signed OAuth state, stored on the profile, and
 // the profile-ready trigger queues the welcome once a confirmed in-pilot
 // account has consent + phone.
@@ -44,12 +54,20 @@ describe('register page collects the opt-in for the Google path', () => {
     assert.match(registerClientSrc, /loginWithProvider\(provider\.toLowerCase\(\), \{ role: authRole, next: target, whatsappConsent: form\.agreeWhatsApp \}\)/);
   });
 
-  test('shows the opt-in checkbox under the Google button, bound to the same state', () => {
+  test('the email-form agreement is required, unticked, and names the business + withdrawal', () => {
+    assert.match(registerClientSrc, /if \(!form\.agreeWhatsApp\)/);
+    assert.match(registerClientSrc, /Please agree to receive WhatsApp updates from BookMyProfessional to continue/);
+    assert.match(registerClientSrc, /agreeWhatsApp: false/);
+    assert.ok(!registerClientSrc.includes('(Optional) Opt in to receive booking updates'), 'consent is no longer marked optional');
+    assert.match(registerClientSrc, /from BookMyProfessional on WhatsApp\. You can turn this off\s*anytime in Settings/);
+  });
+
+  test('no opt-in checkbox under the Google button (removed 20 Nov; consent moves to the next step)', () => {
     const googleBtn = registerClientSrc.indexOf('Continue with Google');
     assert.ok(googleBtn > -1, 'Google button must exist');
     const after = registerClientSrc.slice(googleBtn);
-    assert.match(after, /checked=\{form\.agreeWhatsApp\}/);
-    assert.match(after, /applies when you continue with Google/);
+    assert.ok(!after.includes('checked={form.agreeWhatsApp}'), 'no consent checkbox may sit below Continue with Google');
+    assert.ok(!after.includes('applies when you continue with Google'), 'Google-path opt-in copy removed with the checkbox');
   });
 });
 

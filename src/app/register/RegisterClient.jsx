@@ -116,6 +116,12 @@ export default function RegisterPage() {
       setErrorMessage("Please accept the Terms of Service & Privacy Policy to continue.");
       return;
     }
+    if (!form.agreeWhatsApp) {
+      setErrorMessage(
+        "Please agree to receive WhatsApp updates from BookMyProfessional to continue. You can turn them off anytime in Settings after signing up."
+      );
+      return;
+    }
     if (!form.password || form.password.length < 6) {
       setErrorMessage("Password must be at least 6 characters.");
       return;
@@ -612,7 +618,9 @@ export default function RegisterPage() {
                   className="mt-0.5 rounded text-primary-500 focus:ring-primary-500 h-4 w-4 shrink-0 cursor-pointer"
                 />
                 <span className="text-[11px] text-dark-600 leading-tight">
-                  (Optional) Opt in to receive booking updates, appointment reminders, and other relevant notifications through WhatsApp.
+                  I agree to receive booking updates, appointment reminders, and other relevant
+                  notifications from BookMyProfessional on WhatsApp. You can turn this off
+                  anytime in Settings. <span className="text-rose-500 font-medium">*</span>
                 </span>
               </label>
             </div>
@@ -669,22 +677,6 @@ export default function RegisterPage() {
             </svg>
             <span>Continue with Google</span>
           </button>
-
-          {/* Same opt-in as the email form above: Google sign-up collects no
-              phone or consent on its own, so the choice is taken here and
-              carried through the OAuth state. Bound to the same state, both
-              checkboxes stay in sync. */}
-          <label className="mt-3 flex items-start gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={form.agreeWhatsApp}
-              onChange={(e) => setForm({ ...form, agreeWhatsApp: e.target.checked })}
-              className="mt-0.5 rounded text-primary-500 focus:ring-primary-500 h-4 w-4 shrink-0 cursor-pointer"
-            />
-            <span className="text-[11px] text-dark-600 leading-tight">
-              (Optional) Opt in to receive booking updates, appointment reminders, and other relevant notifications through WhatsApp. This also applies when you continue with Google.
-            </span>
-          </label>
 
           <p className="text-xs text-center text-dark-500">
             Already have an account?{" "}

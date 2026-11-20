@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Phone, ShieldCheck, AlertCircle } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
@@ -21,11 +20,26 @@ export default function CompleteProfileClient() {
   const searchParams = useSearchParams();
   const { user, isLoading: isAuthLoading, showToast } = useAuth();
   const [phone, setPhone] = useState("");
+  const [agreeWhatsApp, setAgreeWhatsApp] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   const role = user?.role === "professional" ? "professional" : "customer";
   const destination = safeNext(searchParams.get("next"), role);
+
+  // Durable completion state (migration supabase/onboarding_completion_marker.sql):
+  // onboarding_completed_at is set once when onboarding completes and is never
+  // cleared - withdrawing WhatsApp consent in Settings does NOT reopen this
+  // step. Accounts that existed at release are backfilled, so they are exempt
+  // here and at the destination guards: legacy behavior is untouched.
+  // Everyone this screen still serves (marker NULL and something missing) is a
+  // new signup mid-onboarding, so the agreement is required, never optional.
+  const hasPhone = Boolean(user?.phone) && cleanPhone(user.phone).length === 10;
+  const onboardingComplete = Boolean(user?.onboarding_completed_at);
+  const needsPhone = !hasPhone;
+  const needsConsent = !user?.whatsapp_consent;
+  const mustComplete = !onboardingComplete && (needsPhone || needsConsent);
+  const consentRequired = mustComplete && needsConsent;
 
   useEffect(() => {
     if (isAuthLoading) return;
@@ -33,17 +47,29 @@ export default function CompleteProfileClient() {
       router.replace("/login");
       return;
     }
-    // Never nag: anyone who already has a number goes straight on.
-    if (user.phone && cleanPhone(user.phone).length === 10) {
+    // Never nag: completed accounts (and legacy-exempt ones) go straight on.
+    if (!mustComplete) {
       router.replace(destination);
     }
-  }, [user, isAuthLoading, destination, router]);
+  }, [user, isAuthLoading, destination, router, mustComplete]);
+
+  // A user who only owes the agreement (number already saved) should not
+  // have to retype it.
+  useEffect(() => {
+    if (hasPhone) setPhone((current) => current || cleanPhone(user.phone));
+  }, [hasPhone, user]);
 
   const handleSave = async (e) => {
     e.preventDefault();
     setErrorMessage("");
     if (!isValidIndianPhone(phone)) {
       setErrorMessage("Please enter a valid 10-digit Indian mobile number.");
+      return;
+    }
+    if (consentRequired && !agreeWhatsApp) {
+      setErrorMessage(
+        "Please agree to receive WhatsApp updates from BookMyProfessional to continue. You can turn them off anytime in Settings."
+      );
       return;
     }
     if (!user?.id) return;
@@ -53,9 +79,18 @@ export default function CompleteProfileClient() {
       // updates their own profiles row (RLS). Setting the phone is what lets
       // an opted-in registration welcome find its number.
       const supabase = createClient();
+      // Consent is written only when the user ticks the box themselves;
+      // an unticked box never sets it, and an existing consent is left as-is.
+      // onboarding_completed_at is set exactly once here and never cleared:
+      // a later consent withdrawal in Settings must not reopen this step.
+      const update = {
+        phone: cleanPhone(phone),
+        onboarding_completed_at: new Date().toISOString(),
+      };
+      if (agreeWhatsApp) update.whatsapp_consent = true;
       const { error } = await supabase
         .from("profiles")
-        .update({ phone: cleanPhone(phone) })
+        .update(update)
         .eq("id", user.id);
       if (error) throw error;
       showToast?.("Mobile number saved.", "success");
@@ -87,15 +122,15 @@ export default function CompleteProfileClient() {
         </p>
         <p className="text-sm text-dark-600 mb-6">
           {role === "professional"
-            ? "Add it so customers and our team can reach you about leads, bookings and payouts."
-            : "Add it so professionals and our team can reach you about your bookings."}
+            ? "Customers and our team need it to reach you about leads, bookings and payouts. A mobile number is required to continue."
+            : "Professionals and our team need it to reach you about your bookings. A mobile number is required to continue."}
         </p>
 
         {user.whatsapp_consent && (
           <div className="flex items-start gap-2 rounded-lg bg-primary-50 border border-primary-100 px-3 py-2.5 mb-6">
             <ShieldCheck className="w-4 h-4 text-primary-500 mt-0.5 shrink-0" />
             <p className="text-xs text-dark-700 leading-relaxed">
-              You opted in to WhatsApp updates during signup - they can only reach a saved number.
+              You opted in to WhatsApp updates during signup - they can only reach a saved number, and saving it here is not verification.
             </p>
           </div>
         )}
@@ -117,6 +152,23 @@ export default function CompleteProfileClient() {
             </div>
           </div>
 
+          {needsConsent && (
+            <label className="flex items-start gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={agreeWhatsApp}
+                onChange={(e) => setAgreeWhatsApp(e.target.checked)}
+                className="mt-0.5 rounded text-primary-500 focus:ring-primary-500 h-4 w-4 shrink-0 cursor-pointer"
+              />
+              <span className="text-[11px] text-dark-600 leading-tight">
+                I agree to receive booking updates, appointment reminders, and service
+                notifications from BookMyProfessional on WhatsApp at this number. You can
+                turn this off anytime in Settings.{" "}
+                <span className="text-rose-500 font-medium">*</span>
+              </span>
+            </label>
+          )}
+
           {errorMessage && (
             <div className="flex items-start gap-2 text-red-600 text-xs">
               <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -132,18 +184,6 @@ export default function CompleteProfileClient() {
             {isSaving ? "Saving..." : "Save and continue"}
           </button>
         </form>
-
-        <div className="text-center mt-4">
-          <Link href={destination} className="text-xs text-dark-500 hover:text-dark-700 underline underline-offset-2">
-            Skip for now
-          </Link>
-          {user.whatsapp_consent && (
-            <p className="text-[11px] text-dark-400 mt-2">
-              You can add it later from your dashboard - WhatsApp messages can only reach a saved
-              number, and saving it here is not verification.
-            </p>
-          )}
-        </div>
       </div>
     </div>
   );
