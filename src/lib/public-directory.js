@@ -35,7 +35,7 @@ export async function readPublicDirectory(category = "all", {
   try {
     const endpoint = new URL(`${url.replace(/\/+$/, "")}/rest/v1/professionals`);
     endpoint.search = new URLSearchParams({
-      select: DIRECTORY_FIELDS, is_active: "eq.true", order: "created_at.desc,id.asc",
+      select: DIRECTORY_FIELDS, is_active: "eq.true", verified: "eq.true", verification_status: "eq.approved", order: "created_at.desc,id.asc",
       offset: "0", limit: String(DIRECTORY_PAGE_SIZE),
       ...(category !== "all" ? { category: `ilike.${category}` } : {}),
     }).toString();
