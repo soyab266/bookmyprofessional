@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { getProfile } from "@/lib/data/profiles";
+import { isDefinitiveAuthLoss } from "@/lib/auth-session-loss";
 
 const AuthContext = createContext(null);
 
@@ -48,6 +49,26 @@ export function AuthProvider({ children }) {
 
     const hydrate = async (authUser) => {
       let profile = await getProfile(authUser.id);
+
+      // A session whose profile row is gone can mean the account was deleted
+      // (e.g. removed from the admin panel) while this browser kept its
+      // persisted tokens: getSession() reads local storage and never checks
+      // the server, so a deleted user would otherwise keep "signing in" and
+      // land in the onboarding step for an account that no longer exists.
+      // Validate against the server; only a definitive loss (deleted/revoked)
+      // clears THIS browser's local session - network errors, 5xx and rate
+      // limits must never sign a healthy user out.
+      if (!profile) {
+        const { error: userError } = await supabase.auth.getUser();
+        if (isDefinitiveAuthLoss(userError)) {
+          await supabase.auth.signOut({ scope: "local" });
+          if (active) {
+            setUser(null);
+            setIsLoading(false);
+          }
+          return;
+        }
+      }
 
       // Verify if OAuth initiated with professional role but profile defaulted to customer
       if (typeof window !== 'undefined') {
