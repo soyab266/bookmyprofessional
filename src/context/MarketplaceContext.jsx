@@ -65,7 +65,7 @@ export function MarketplaceProvider({ children }) {
   const [filteredProfessionals, setFilteredProfessionals] = useState([]);
   // Browse (/professionals) sets this so the public directory and its counts exclude
   // unverified professionals; featured/homepage reads leave it off.
-  const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const [verifiedOnly, setVerifiedOnly] = useState(true);
   const [locations, setLocations] = useState(DEFAULT_LOCATIONS);
   const [isLoadingProfessionals, setIsLoadingProfessionals] = useState(true);
   // Owned solely by the catalog effect below. The detail page must not treat
