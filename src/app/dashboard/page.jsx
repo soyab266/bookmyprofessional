@@ -1,4 +1,5 @@
 "use client";
+import { bookingNeedsVerificationReview } from "@/lib/professional-booking-eligibility";
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
@@ -250,12 +251,13 @@ export default function CustomerDashboardPage() {
     const derived = getDerivedBookingStatus(b);
     if (bookingFilter === "all") return true;
     if (bookingFilter === "payment_pending") return derived === "upcoming" && b.paymentStatus !== "paid";
-    if (bookingFilter === "upcoming") return derived === "upcoming" && b.paymentStatus === "paid";
+    if (bookingFilter === "upcoming") return derived === "upcoming" && b.paymentStatus === "paid" && !bookingNeedsVerificationReview(b);
     return b.status === bookingFilter;
   });
 
   const getStatusBadge = (status, b) => {
     const derived = getDerivedBookingStatus(b);
+    if (bookingNeedsVerificationReview(b)) return <span className="text-xs font-semibold text-amber-700">Verification review required. Service is not confirmed.</span>;
     switch (derived) {
       case "missed":
         return (
@@ -685,7 +687,7 @@ export default function CustomerDashboardPage() {
                                 );
                               })()}
 
-                              {getDerivedBookingStatus(b) === "upcoming" && b.paymentStatus === "paid" && (
+                              {getDerivedBookingStatus(b) === "upcoming" && b.paymentStatus === "paid" && !bookingNeedsVerificationReview(b) && (
                                 <button
                                   type="button"
                                   onClick={() => openReschedule(b)}
