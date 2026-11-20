@@ -2,9 +2,14 @@ import { cache } from "react";
 import { notFound } from "next/navigation";
 import { readPublicProfileStatus as readUncachedPublicProfileStatus } from "@/lib/public-profile-status";
 import { buildProfileMetadata, readPublicProfileMetadata } from "@/lib/profile-metadata";
+import { confirmPublicProfileStatus } from "@/lib/confirm-public-profile-status";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 // Share the status decision between metadata and layout in each render pass.
-const readPublicProfileStatus = cache(readUncachedPublicProfileStatus);
+const readPublicProfileStatus = cache((id) => confirmPublicProfileStatus(id, {
+  readAnonymousStatus: readUncachedPublicProfileStatus,
+  createAdminClient,
+}));
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessional.com";
 
