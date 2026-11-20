@@ -80,7 +80,15 @@ export default function MarketplaceDirectory({ preview = false, initialDirectory
     setPage,
     openProDetail,
     startBooking,
+    setVerifiedOnly,
   } = useMarketplace();
+
+  // The public browse directory excludes unverified professionals; the homepage
+  // preview and featured section keep showing them with honest status labels.
+  useEffect(() => {
+    setVerifiedOnly(!preview);
+    return () => setVerifiedOnly(false);
+  }, [preview, setVerifiedOnly]);
 
   // Initial cards are the actual visible directory, not a duplicate SEO-only list.
   // Retire the snapshot permanently after the first live query, including zero results.
