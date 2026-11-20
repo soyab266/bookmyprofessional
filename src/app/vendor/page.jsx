@@ -32,6 +32,8 @@ import { SERVICE_AREA_CITIES } from "@/lib/service-areas";
 import { uploadImage, ikImage } from "@/lib/imagekit";
 import { cleanPincode, isValidPincodeFormat } from "@/lib/pincode";
 import PincodeInput from "@/components/PincodeInput";
+import WhatsAppConsentSettings from "@/components/WhatsAppConsentSettings";
+import { cleanPhone } from "@/lib/phone";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { createClient } from "@/lib/supabase/client";
 import { generateSlotsForDay, formatTime24to12 } from "@/lib/data/bookings";
@@ -165,6 +167,20 @@ export default function VendorPortalPage() {
         router.push("/login?next=/vendor&role=professional");
       } else if (user.role !== "professional") {
         router.push("/register?role=professional");
+      } else {
+        // Onboarding enforcement (owner decision, 20 Nov 2026): a
+        // professional who has not completed onboarding (required number +
+        // required agreement) is sent to finish it before using the portal.
+        // Accounts completed once - including legacy accounts backfilled by
+        // the release migration - are never sent back, and consent
+        // withdrawal never re-gates. Client-side gate on the destination;
+        // direct API calls and other pages are not covered by this guard.
+        const hasValidPhone = cleanPhone(user.phone || "").length === 10;
+        const onboardingDone =
+          Boolean(user.onboarding_completed_at) || (hasValidPhone && user.whatsapp_consent);
+        if (!onboardingDone) {
+          router.replace("/complete-profile?next=/vendor");
+        }
       }
     }
   }, [isLoading, user, router]);
@@ -2413,6 +2429,7 @@ export default function VendorPortalPage() {
               {/* TAB 6: NOTIFICATION SETTINGS */}
               {activeTab === "settings" && (
                 <div className="p-6 sm:p-8 space-y-6 max-w-2xl">
+                  <WhatsAppConsentSettings />
                   <div>
                     <h3 className="font-heading text-lg font-bold text-dark-900">
                       Notification Preferences
@@ -2670,4 +2687,4 @@ export default function VendorPortalPage() {
       </main>
     </div>
   );
-}
+                      }
