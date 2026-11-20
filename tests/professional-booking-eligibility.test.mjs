@@ -50,5 +50,5 @@ test('payment initiation, reminder, reschedule, and DB direct service paths have
   const hash=read('src/app/api/payu/hash/route.js');assert.ok(hash.indexOf('!await readProfessionalBookability')<hash.indexOf('const hash = generatePaymentHash'));
   assert.match(read('src/app/api/notifications/whatsapp-reminder/route.js'),/!await readProfessionalBookability\(supabase, booking.professional_id\)/);
   const bookings=read('src/lib/data/bookings.js');assert.match(bookings,/Service cannot start until/);assert.match(bookings,/Rescheduling is unavailable until/);
-  const sql=read('supabase/booking_requires_verified_professional.sql');assert.match(sql,/new.status = 'in_progress'/);assert.match(sql,/to_jsonb\(new\)->'date'/);assert.match(sql,/for share/);
+  const sql=read('supabase/booking_requires_verified_professional.sql');assert.match(sql,/new.status = 'in_progress'/);assert.match(sql,/to_jsonb\(new\)->'date'/);assert.match(sql,/for share/);assert.match(sql,/security definer set search_path=public,pg_temp/);
 });
