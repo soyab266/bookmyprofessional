@@ -67,6 +67,19 @@ describe('complete-profile page', () => {
     assert.match(clientSrc, /const hasPhone = Boolean\(user\?\.phone\) && cleanPhone\(user\.phone\)\.length === 10;/);
   });
 
+  test('post-save navigation is a full load so guards re-read the saved profile (live loop fix, 20 Nov)', () => {
+    // First live Google signup (20 Nov): the save wrote phone + consent +
+    // marker correctly, but router.replace evaluated the destination guard
+    // against AuthContext's pre-save profile and looped back to this step.
+    assert.match(clientSrc, /window\.location\.assign\(destination\);/);
+    assert.match(clientSrc, /PRE-SAVE profile[\s\S]*loop straight back/);
+    const saveNavBlock = clientSrc.split('Mobile number saved.')[1] || '';
+    assert.ok(saveNavBlock.slice(0, 700).includes('window.location.assign(destination);'),
+      'the save success path must hard-navigate');
+    assert.ok(!saveNavBlock.slice(0, 700).includes('router.replace(destination)'),
+      'the save success path must not client-side navigate to the guarded destination');
+  });
+
   test('explains why the number is asked (Google does not share it)', () => {
     assert.match(clientSrc, /Google does not share your mobile number/);
   });
