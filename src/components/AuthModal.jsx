@@ -63,7 +63,7 @@ export default function AuthModal() {
     phone: "",
     password: "",
     confirmPassword: "",
-    category: "Doctors",
+    category: "",
     subcategory: "",
     city: "Mumbai",
     pincode: "",
@@ -111,7 +111,7 @@ export default function AuthModal() {
     listCategories().then((cats) => {
       if (!active || !cats?.length) return;
       setCategories(cats);
-      setSignupForm((f) => (cats.includes(f.category) ? f : { ...f, category: cats[0] }));
+      setSignupForm((f) => (cats.includes(f.category) ? f : { ...f, category: "", subcategory: "" }));
     });
     listSubcategories().then((map) => {
       if (active) setSubcategories(map || {});
@@ -192,6 +192,10 @@ export default function AuthModal() {
       return;
     }
     if (authRole === "professional") {
+      if (!signupForm.category || !categories.includes(signupForm.category)) {
+        setErrorMessage("Please select your profession category.");
+        return;
+      }
       const availableSubs = subcategories[signupForm.category] || [];
       if (availableSubs.length > 0 && !signupForm.subcategory?.trim()) {
         setErrorMessage(`Please select a specialty subcategory for ${signupForm.category}.`);
@@ -678,12 +682,14 @@ export default function AuthModal() {
                             Your Profession / Specialty
                           </label>
                           <select
+                            required
                             value={signupForm.category}
                             onChange={(e) =>
                               setSignupForm({ ...signupForm, category: e.target.value, subcategory: "" })
                             }
                             className="w-full px-2.5 py-2 bg-white border border-primary-200 rounded-lg text-xs text-dark-900 focus:outline-none focus:ring-2 focus:ring-primary-500/20"
                           >
+                            <option value="" disabled>Select your category</option>
                             {categories.map((cat) => (
                               <option key={cat} value={cat}>
                                 {cat}
@@ -719,7 +725,7 @@ export default function AuthModal() {
                                 ))}
                               </>
                             ) : (
-                              <option value="">General {signupForm.category}</option>
+                              <option value="">{signupForm.category ? `General ${signupForm.category}` : "Select a category first"}</option>
                             )}
                           </select>
                         </div>

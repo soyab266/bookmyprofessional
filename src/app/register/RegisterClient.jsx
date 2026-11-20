@@ -65,7 +65,7 @@ export default function RegisterPage() {
     email: "",
     phone: "",
     password: "",
-    category: "Doctors",
+    category: "",
     subcategory: "",
     city: "",
     state: "",
@@ -84,7 +84,7 @@ export default function RegisterPage() {
       if (!active || !cats?.length) return;
       setCategories(cats);
       // Keep the selected specialty valid if the DB list no longer contains it.
-      setForm((f) => (cats.includes(f.category) ? f : { ...f, category: cats[0] }));
+      setForm((f) => (cats.includes(f.category) ? f : { ...f, category: "", subcategory: "" }));
     });
     listSubcategories().then((map) => {
       if (active) setSubcategories(map || {});
@@ -129,6 +129,10 @@ export default function RegisterPage() {
       return;
     }
     if (authRole === "professional") {
+      if (!form.category || !categories.includes(form.category)) {
+        setErrorMessage("Please select your profession category.");
+        return;
+      }
       const availableSubs = subcategories[form.category] || [];
       if (availableSubs.length > 0 && !form.subcategory?.trim()) {
         setErrorMessage(`Please select a specialty subcategory for ${form.category}.`);
@@ -471,10 +475,12 @@ export default function RegisterPage() {
                     Profession Category
                   </label>
                   <select
+                    required
                     value={form.category}
                     onChange={(e) => setForm({ ...form, category: e.target.value, subcategory: "" })}
                     className="w-full px-3 py-2 bg-white border border-primary-200 rounded-xl text-xs text-dark-900 focus:outline-none"
                   >
+                    <option value="" disabled>Select your category</option>
                     {categories.map((cat) => (
                       <option key={cat} value={cat}>
                         {cat}
@@ -508,7 +514,7 @@ export default function RegisterPage() {
                         ))}
                       </>
                     ) : (
-                      <option value="">General {form.category}</option>
+                      <option value="">{form.category ? `General ${form.category}` : "Select a category first"}</option>
                     )}
                   </select>
                 </div>
