@@ -29,13 +29,14 @@ test("browse-only verifiedOnly flag flows from context through listProfessionals
   assert.match(api, /verifiedOnly,\s*\n\s*\}\)/);
 
   const context = await readFile(new URL("../src/context/MarketplaceContext.jsx", import.meta.url), "utf8");
-  assert.match(context, /const \[verifiedOnly, setVerifiedOnly\] = useState\(false\)/);
+  assert.match(context, /const \[verifiedOnly, setVerifiedOnly\] = useState\(true\)/);
   assert.match(context, /near: nearCoords,\s*\n\s*verifiedOnly,/);
   assert.match(context, /nearCoords,\s*\n\s*verifiedOnly,\s*\n\s*\]\)/);
 
   const directory = await readFile(new URL("../src/components/MarketplaceDirectory.jsx", import.meta.url), "utf8");
-  assert.match(directory, /setVerifiedOnly\(!preview\)/);
-  assert.match(directory, /return \(\) => setVerifiedOnly\(false\)/);
+  assert.match(directory, /setVerifiedOnly\(true\)/);
+  assert.match(directory, /pro\.verified === true && pro\.verificationStatus === "approved"/);
+  assert.doesNotMatch(directory, /setVerifiedOnly\(false\)/);
 });
 
 test("homepage featured section keeps showing honestly labeled unverified professionals", async () => {
@@ -76,4 +77,15 @@ test("migration enforces verified professionals at the database and rollback is 
   const rollback = await readFile(new URL("../supabase/booking_requires_verified_professional_rollback.sql", import.meta.url), "utf8");
   assert.match(rollback, /drop trigger if exists bookings_verified_professional_guard on public\.bookings/);
   assert.match(rollback, /drop function if exists public\.enforce_booking_verified_professional\(\)/);
+});
+
+test("homepage verified Browse is gated separately from Featured, including stale-render defense", async () => {
+  const home = await readFile(new URL("../src/app/page.jsx", import.meta.url), "utf8");
+  assert.match(home, /listProfessionals\(\{ page: 1, pageSize: 5, sortBy: "featured" \}\)/);
+  assert.doesNotMatch(home, /filteredProfessionals: marketplacePros/);
+  assert.match(home, /\? "Book Now" : "View Profile"/);
+  const directory = await readFile(new URL("../src/components/MarketplaceDirectory.jsx", import.meta.url), "utf8");
+  assert.match(directory, /setVerifiedOnly\(true\)/);
+  assert.doesNotMatch(directory, /setVerifiedOnly\(!preview\)/);
+  assert.match(directory, /\.filter\(\(pro\) => pro.verified === true && pro.verificationStatus === "approved"\)/);
 });
