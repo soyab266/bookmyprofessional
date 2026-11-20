@@ -111,6 +111,10 @@ export default function PincodeInput({
 
   const handleChange = (e) => {
     const cleaned = cleanPincode(e.target.value);
+    // Do not label the new input with a previous pincode's verified location.
+    setVerificationResult(null);
+    setLocationMismatch(null);
+    lastCheckedRef.current = "";
     onChange?.(cleaned);
   };
 
