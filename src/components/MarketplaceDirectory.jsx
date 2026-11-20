@@ -83,12 +83,11 @@ export default function MarketplaceDirectory({ preview = false, initialDirectory
     setVerifiedOnly,
   } = useMarketplace();
 
-  // The public browse directory excludes unverified professionals; the homepage
-  // preview and featured section keep showing them with honest status labels.
+  // Homepage Browse and the full directory are both verified-only.
+  // Featured is a separate read and never changes this gate.
   useEffect(() => {
-    setVerifiedOnly(!preview);
-    return () => setVerifiedOnly(false);
-  }, [preview, setVerifiedOnly]);
+    setVerifiedOnly(true);
+  }, [setVerifiedOnly]);
 
   // Initial cards are the actual visible directory, not a duplicate SEO-only list.
   // Retire the snapshot permanently after the first live query, including zero results.
@@ -96,8 +95,12 @@ export default function MarketplaceDirectory({ preview = false, initialDirectory
   const useInitialDirectory = initialDirectory && directoryReadVersion === 0 && !initialSnapshotRetired;
   const selectedCategory = useInitialDirectory ? initialDirectory.category : liveSelectedCategory;
   const initialUnavailable = useInitialDirectory && initialDirectory.status !== "ready";
-  const filteredProfessionals = useInitialDirectory ? initialDirectory.rows : liveFilteredProfessionals;
-  const total = useInitialDirectory ? initialDirectory.total || 0 : liveTotal;
+  const filteredProfessionals = (useInitialDirectory ? initialDirectory.rows : liveFilteredProfessionals)
+    .filter((pro) => pro.verified === true && pro.verificationStatus === "approved");
+  const rawRows = useInitialDirectory ? initialDirectory.rows : liveFilteredProfessionals;
+  const total = filteredProfessionals.length !== rawRows.length
+    ? filteredProfessionals.length
+    : (useInitialDirectory ? initialDirectory.total || 0 : liveTotal);
   const isLoadingProfessionals = useInitialDirectory ? initialUnavailable : liveIsLoadingProfessionals;
 
   const { showToast } = useAuth();
