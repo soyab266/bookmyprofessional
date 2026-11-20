@@ -1,4 +1,5 @@
 "use client";
+import { bookingNeedsVerificationReview } from "@/lib/professional-booking-eligibility";
 
 import React, { useState, useEffect, useRef, useMemo } from "react";
 import Link from "next/link";
@@ -1452,6 +1453,7 @@ export default function VendorPortalPage() {
                             </Link>
                             {(() => {
                               const derivedStatus = getDerivedBookingStatus(b);
+                              if (bookingNeedsVerificationReview(b)) return <span className="text-xs font-semibold text-amber-700">Verification review required. Service cannot start.</span>;
                               if (derivedStatus === "missed") return (
                                 <span className="text-xs text-orange-700 font-semibold bg-orange-50 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
                                   <AlertCircle className="w-3.5 h-3.5" /> Missed — Contact Customer
@@ -2661,4 +2663,4 @@ export default function VendorPortalPage() {
       </main>
     </div>
   );
-                                  }
+                              }
