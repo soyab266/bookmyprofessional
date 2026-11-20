@@ -18,12 +18,13 @@ function fakeClient(currentRow) {
   return {
     calls,
     from(table) {
+      if (table === "professionals") return { select() { return this; }, eq() { return this; }, async maybeSingle() { return { data: { verified: true, verification_status: "approved" } }; } };
       assert.equal(table, "bookings");
       return {
         select() {
           return {
             eq() {
-              return { async maybeSingle() { return { data: currentRow }; } };
+              return { async maybeSingle() { return { data: { professional_id: "pro", ...currentRow } }; } };
             },
           };
         },
