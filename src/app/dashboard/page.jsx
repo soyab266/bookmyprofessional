@@ -37,6 +37,7 @@ import { uploadImage, ikImage } from "@/lib/imagekit";
 import { formatMoney } from "@/lib/money";
 import { nextBookingDates, getAvailableSlots, rescheduleBooking } from "@/lib/data/bookings";
 import { getDerivedBookingStatus, isBookingExpired } from "@/lib/datetime";
+import { getBookingPaymentLabel } from "@/lib/booking-payment-label";
 import { cleanPincode, isValidPincodeFormat } from "@/lib/pincode";
 import { cleanPhone, isValidIndianPhone } from "@/lib/phone";
 import PincodeInput from "@/components/PincodeInput";
@@ -637,14 +638,8 @@ export default function CustomerDashboardPage() {
                               <span className={`text-xl font-bold font-heading ${b.status === 'cancelled' ? 'text-dark-400 line-through' : 'text-dark-900'}`}>
                                 {formatMoney(b.totalPaid)}
                               </span>
-                              <span className={`block text-[11px] font-medium mt-0.5 ${b.status === 'cancelled' ? (b.paymentStatus === 'refunded' ? 'text-emerald-600' : 'text-amber-600') : 'text-emerald-600'}`}>
-                                {b.paymentStatus === "refunded"
-                                  ? "Refunded"
-                                  : b.status === "cancelled" && Number(b.totalPaid) > 0 && b.paymentStatus !== "unpaid"
-                                  ? "Refund Pending"
-                                  : b.status === "cancelled"
-                                  ? "Cancelled"
-                                  : `Paid via ${b.paymentMethod || "—"}`}
+                              <span className={`block text-[11px] font-medium mt-0.5 ${b.status === 'cancelled' ? (b.paymentStatus === 'refunded' ? 'text-emerald-600' : 'text-amber-600') : (b.paymentStatus === 'unpaid' ? 'text-amber-600' : 'text-emerald-600')}`}>
+                                {getBookingPaymentLabel(b)}
                               </span>
                             </div>
                           </div>
