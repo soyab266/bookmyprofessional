@@ -497,6 +497,10 @@ export default function ProfessionalDetailPage({ params }) {
                             <span className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-dark-100 text-dark-500 font-semibold text-xs cursor-not-allowed">
                               Your Service
                             </span>
+                          ) : !(pro.verified && pro.verificationStatus === "approved") ? (
+                            <span className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-dark-100 text-dark-500 font-semibold text-xs cursor-not-allowed">
+                              Booking opens after verification
+                            </span>
                           ) : (
                             <Link
                               href={`/book/${pro.id}?service=${srv.id}`}
@@ -923,6 +927,11 @@ export default function ProfessionalDetailPage({ params }) {
                   <div className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-dark-100 text-dark-500 font-semibold text-sm cursor-not-allowed">
                     <Calendar className="w-4 h-4" />
                     <span>You cannot book your own profile</span>
+                  </div>
+                ) : !(pro.verified && pro.verificationStatus === "approved") ? (
+                  <div className="w-full flex items-center justify-center gap-2 py-3 px-6 rounded-xl bg-dark-100 text-dark-500 font-semibold text-sm cursor-not-allowed">
+                    <Calendar className="w-4 h-4" />
+                    <span>Booking opens after verification</span>
                   </div>
                 ) : (
                   <Link

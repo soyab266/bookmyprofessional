@@ -1,3 +1,4 @@
+import { readProfessionalBookability } from '@/lib/professional-booking-eligibility';
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -35,6 +36,10 @@ export async function POST(req) {
 
     if (booking.payment_status === 'paid') {
       return NextResponse.json({ error: 'This booking is already paid.' }, { status: 409 });
+    }
+
+    if (booking.status !== 'upcoming' || !await readProfessionalBookability(admin, booking.professional_id)) {
+      return NextResponse.json({ error: 'Payment is unavailable until this professional is verified and approved.' }, { status: 409 });
     }
 
     const { data: profile } = await admin

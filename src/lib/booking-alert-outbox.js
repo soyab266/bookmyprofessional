@@ -1,3 +1,4 @@
+import { readProfessionalBookability } from './professional-booking-eligibility.js';
 // Server-only. Review draft, no live job or activation is installed.
 import { hasWhatsAppConsent } from './whatsapp.js';
 import { buildCustomerBookingReceived, buildProfessionalBookingRequest, normaliseMetaRecipient } from './meta-whatsapp-templates.js';
@@ -26,7 +27,7 @@ export async function confirmVerifiedPaidBooking(supabase, bookingId, amount, pr
   }
   // Preserve the existing flag-off behavior, including its best-effort updates.
   const { data } = await supabase.from('bookings')
-    .update({ payment_status: 'paid', status: 'upcoming' })
+    .update({ payment_status: 'paid' })
     .eq('id', bookingId).neq('payment_status', 'paid').select('*');
   await supabase.from('payments').update({ status: 'held', provider: 'payu', provider_ref: providerRef || null }).eq('booking_id', bookingId);
   return data?.[0] || null;
@@ -56,7 +57,7 @@ export async function dispatchBookingAlerts(supabase, deps = {}) {
       const liveBooking = await supabase.from('bookings').select('id,payment_status,status,date,time_slot,service_title,customer_id,professional_id').eq('id', row.booking_id).maybeSingle();
       if (liveBooking.error) throw new Error('booking_check_failed');
       const b = liveBooking.data;
-      if (!b || b.payment_status !== 'paid' || b.status !== 'upcoming' || String(b.date) !== String(row.booking.date) || b.time_slot !== row.booking.time_slot || b.service_title !== row.booking.service_title || String(b.customer_id) !== String(row.booking.customer_id) || String(b.professional_id) !== String(row.booking.professional_id)) {
+      if (!b || b.payment_status !== 'paid' || b.status !== 'upcoming' || String(b.date) !== String(row.booking.date) || b.time_slot !== row.booking.time_slot || b.service_title !== row.booking.service_title || String(b.customer_id) !== String(row.booking.customer_id) || String(b.professional_id) !== String(row.booking.professional_id) || !await readProfessionalBookability(supabase, b.professional_id)) {
         const done = await supabase.rpc('finish_booking_alert', { p_id: row.id, p_claim_token: row.claim_token, p_status: 'skipped', p_message_id: null, p_error: 'booking_changed_or_unavailable', p_release: true });
         if (done.error || done.data !== true) return { ...summary, error: 'booking_finish_failed' };
         summary.skipped++;

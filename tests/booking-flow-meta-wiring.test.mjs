@@ -1,3 +1,4 @@
+const eligibleClient = { from() { return { select() { return this; }, eq() { return this; }, async maybeSingle() { return { data: { verified: true, verification_status: 'approved' } }; } }; } };
 // Regression coverage for the old direct Meta booking path being removed.
 // Outcome/consent coverage now lives in booking-alert-outbox.test.mjs.
 import {test} from 'node:test';
@@ -15,13 +16,13 @@ test('booking emails path cannot directly send Meta or write registration queue'
 });
 test('enabled path no longer queries WhatsApp recipients or sends from email hook',async()=>{
  process.env.META_WHATSAPP_BOOKINGS_ENABLED='true';const cols=[];
- const sb={from(t){assert.equal(t,'profiles');return {select(c){cols.push(c);return {async in(){return {data:[]}}}}}}};
- const r=await dispatchBookingConfirmedNotifications({id:'regression-queue-only'},sb);assert.equal(r.success,true);
+ const sb={from(t){if(t==='professionals') return eligibleClient.from(t);assert.equal(t,'profiles');return {select(c){cols.push(c);return {async in(){return {data:[]}}}}}}};
+ const r=await dispatchBookingConfirmedNotifications({id:'regression-queue-only',professional_id:'pro'},sb);assert.equal(r.success,true);
  assert.equal(cols.some(c=>c.includes('whatsapp_consent')),false);
  delete process.env.META_WHATSAPP_BOOKINGS_ENABLED;
 });
 test('in-process email dedupe preserved, not claimed as durable WhatsApp dedupe',async()=>{
- const b={id:'regression-email-dedupe'};const first=await dispatchBookingConfirmedNotifications(b,null);const second=await dispatchBookingConfirmedNotifications(b,null);
+ const b={id:'regression-email-dedupe',professional_id:'pro'};const first=await dispatchBookingConfirmedNotifications(b,eligibleClient);const second=await dispatchBookingConfirmedNotifications(b,eligibleClient);
  assert.equal(first.success,true);assert.equal(second.deduplicated,true);
 });
 test('missing booking id fails without action',async()=>assert.equal((await dispatchBookingConfirmedNotifications(null,null)).reason,'missing_booking_id'));

@@ -166,6 +166,10 @@ function applySearch(query, term) {
 function applyFilters(query, opts) {
   let q = applySearch(query, opts.search);
 
+  // Browse-directory reads only: unverified professionals stay out of the public
+  // directory and its counts. Only separate Featured reads leave this off.
+  if (opts.verifiedOnly) q = q.eq("verified", true).eq("verification_status", "approved");
+
   if (opts.category && opts.category !== "all") q = q.ilike("category", opts.category);
   const city = locationFilterTerm(opts.location === "all" ? "" : opts.location);
   // A coverage-city search also matches pros who declared that city in their
@@ -218,8 +222,10 @@ function applySort(query, sortBy) {
 
 function clientFilter(rows, opts) {
   return rows.filter((pro) => {
-    // Show all active professionals regardless of verification status — the badge reflects the real status
     if (pro.isActive === false) return false;
+    // Browse-directory reads only: unverified professionals stay out of the public
+    // directory and its counts. Only separate Featured reads leave this off.
+    if (opts.verifiedOnly && !(pro.verified === true && pro.verificationStatus === "approved")) return false;
 
     if (opts.search && opts.search.trim()) {
       const q = opts.search.toLowerCase();
@@ -509,6 +515,7 @@ export async function listProfessionals(options = {}) {
       if (options.availabilityDay && options.availabilityDay !== "all") params.set("availabilityDay", options.availabilityDay);
       if (options.availabilitySlot && options.availabilitySlot !== "all") params.set("availabilitySlot", options.availabilitySlot);
       if (options.page) params.set("page", String(options.page));
+      if (options.verifiedOnly) params.set("verifiedOnly", "true");
       if (options.pageSize) params.set("pageSize", String(options.pageSize));
       if (options.near) {
         const lat = options.near.latitude ?? options.near.lat;

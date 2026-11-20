@@ -63,6 +63,9 @@ export function MarketplaceProvider({ children }) {
   const [professionals, setProfessionals] = useState([]);
   // Server-filtered, paginated page of the directory. Detail/booking pages keep using the full `professionals` list.
   const [filteredProfessionals, setFilteredProfessionals] = useState([]);
+  // Browse (/professionals) sets this so the public directory and its counts exclude
+  // unverified professionals; featured/homepage reads leave it off.
+  const [verifiedOnly, setVerifiedOnly] = useState(true);
   const [locations, setLocations] = useState(DEFAULT_LOCATIONS);
   const [isLoadingProfessionals, setIsLoadingProfessionals] = useState(true);
   // Owned solely by the catalog effect below. The detail page must not treat
@@ -218,6 +221,7 @@ export function MarketplaceProvider({ children }) {
         pageSize: DEFAULT_PAGE_SIZE,
         locations,
         near: nearCoords,
+        verifiedOnly,
       });
       if (!active) return;
       setDirectoryReadVersion((version) => version + 1);
@@ -244,6 +248,7 @@ export function MarketplaceProvider({ children }) {
     page,
     locations,
     nearCoords,
+    verifiedOnly,
   ]);
 
   // Any filter change returns to page 1.
@@ -518,6 +523,8 @@ export function MarketplaceProvider({ children }) {
         // Data
         professionals,
         filteredProfessionals,
+        verifiedOnly,
+        setVerifiedOnly,
         locations,
         isLoadingProfessionals,
         isCatalogLoading,

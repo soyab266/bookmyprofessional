@@ -46,6 +46,8 @@ export async function GET(request) {
     const nearLat = searchParams.get("nearLat");
     const nearLng = searchParams.get("nearLng");
     const near = nearLat && nearLng ? { latitude: Number(nearLat), longitude: Number(nearLng) } : null;
+    // Both Browse surfaces exclude unverified professionals; only separate Featured reads omit this flag.
+    const verifiedOnly = searchParams.get("verifiedOnly") === "true";
 
     const result = await queryProfessionals(supabase, {
       search,
@@ -61,6 +63,7 @@ export async function GET(request) {
       page,
       pageSize,
       near,
+      verifiedOnly,
     });
 
     return NextResponse.json(result);

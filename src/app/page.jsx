@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import Button from "@/components/Button";
 import Card from "@/components/Card";
+import { listProfessionals } from "@/lib/data/professionals";
 import MarketplaceDirectory from "@/components/MarketplaceDirectory";
 import CountUp from "@/components/CountUp";
 import { useAuth } from "@/context/AuthContext";
@@ -109,9 +110,17 @@ export default function HomePage() {
     setNearCoords,
     startBooking,
     openProDetail,
-    filteredProfessionals: marketplacePros,
     setIsProDashboardOpen,
   } = useMarketplace();
+
+  const [marketplacePros, setFeaturedProfessionals] = useState([]);
+  useEffect(() => {
+    let active = true;
+    listProfessionals({ page: 1, pageSize: 5, sortBy: "featured" }).then(({ rows }) => {
+      if (active) setFeaturedProfessionals(rows || []);
+    });
+    return () => { active = false; };
+  }, []);
 
   const [heroLocation, setHeroLocation] = useState("");
   const [heroService, setHeroService] = useState("");
@@ -892,7 +901,7 @@ export default function HomePage() {
                   Featured <span className="text-primary-500">Professionals</span>
                 </h2>
                 <p className="mt-2 text-sm sm:text-base text-dark-600 font-normal">
-                  Top rated and verified experts near you.
+                  Explore professionals. Booking opens after verification.
                 </p>
               </div>
               <a
@@ -935,7 +944,7 @@ export default function HomePage() {
                         {/* Verification Status Badge */}
                         {(() => {
                           const s = pro.verificationStatus;
-                          if (s === "approved") {
+                          if (pro.verified === true && s === "approved") {
                             return (
                               <div className="absolute top-2.5 left-2.5 flex items-center gap-1 bg-white/90 backdrop-blur-xs rounded-full px-2 py-0.5 shadow-xs">
                                 <CheckCircle2 className="w-3.5 h-3.5 text-primary-500" />
@@ -988,7 +997,7 @@ export default function HomePage() {
                           <h3 className="font-heading font-bold text-sm text-dark-900 leading-tight truncate group-hover:text-primary-600 transition-colors">
                             {pro.name}
                           </h3>
-                          {pro.verificationStatus === "approved" && (
+                          {pro.verified === true && pro.verificationStatus === "approved" && (
                             <CheckCircle2 className="w-3.5 h-3.5 text-primary-500 shrink-0" />
                           )}
                         </div>
@@ -1030,10 +1039,10 @@ export default function HomePage() {
                     {/* Bottom Action Button */}
                     <div className="p-3.5 pt-0">
                       <Link
-                        href={`/book/${pro.id}`}
+                        href={pro.verified === true && pro.verificationStatus === "approved" ? `/book/${pro.id}` : `/professionals/${pro.id}`}
                         className="w-full inline-flex items-center justify-center rounded-[6px] py-2 text-xs font-semibold shadow-button bg-primary-500 hover:bg-primary-600 text-white transition-colors"
                       >
-                        Book Now
+                        {pro.verified === true && pro.verificationStatus === "approved" ? "Book Now" : "View Profile"}
                       </Link>
                     </div>
                   </div>

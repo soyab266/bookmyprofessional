@@ -1,3 +1,4 @@
+import { readProfessionalBookability } from '@/lib/professional-booking-eligibility';
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { sendBookingReminderWhatsApp } from '@/lib/whatsapp';
@@ -68,6 +69,7 @@ export async function POST(req) {
     let skipped = 0;
 
     for (const booking of bookings || []) {
+      if (!await readProfessionalBookability(supabase, booking.professional_id)) { skipped++; continue; }
       const profileIds = [booking.customer_id, booking.professional_id].filter(Boolean);
       if (!profileIds.length) { skipped++; continue; }
 

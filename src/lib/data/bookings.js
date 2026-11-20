@@ -1,3 +1,4 @@
+import { readProfessionalBookability, isProfessionalBookable } from "../professional-booking-eligibility.js";
 import { createClient } from "@/lib/supabase/client";
 import { createPaymentForBooking, getCommissionRate } from "./payments";
 
@@ -61,6 +62,7 @@ function mapBooking(row) {
   return {
     id: row.id,
     proId: row.professional_id,
+    professionalBookable: isProfessionalBookable(pro),
     proName: pro.name || "Professional",
     proRole: pro.role_title || "",
     proAvatar: pro.image_url || "",
@@ -97,7 +99,7 @@ export async function listMyBookings(client) {
       const { data, error } = await supabase
         .from("bookings")
         .select(
-          "*, professionals(name, role_title, image_url), customer:profiles(full_name, email, phone), reviews(id, rating)"
+          "*, professionals(name, role_title, image_url, verified, verification_status), customer:profiles(full_name, email, phone), reviews(id, rating)"
         )
         .order("created_at", { ascending: false });
 
@@ -411,6 +413,22 @@ export async function createBooking(payload, client) {
     throw userFacing("You cannot book your own service.");
   }
 
+  // Re-check verification against the database — the passed pro object is
+  // client-controlled and must never be the only gate for booking creation.
+  if (pro?.id) {
+    const { data: proRow, error: proLookupError } = await supabase
+      .from("professionals")
+      .select("id, verified, verification_status")
+      .eq("id", pro.id)
+      .maybeSingle();
+    if (proLookupError || !proRow) {
+      throw userFacing("This professional is not available for booking.");
+    }
+    if (!(proRow.verified === true && proRow.verification_status === "approved")) {
+      throw userFacing("This professional's verification is still in progress. Booking opens once their profile is verified.");
+    }
+  }
+
   // Server-side pincode and city validation for booking address
   const explicitPin = payload.pincode ? String(payload.pincode).trim().replace(/\D/g, "").slice(0, 6) : null;
   // If not explicit, try to extract 6-digit PIN from address string
@@ -477,7 +495,7 @@ export async function createBooking(payload, client) {
   let { data, error } = await supabase
     .from("bookings")
     .insert(row)
-    .select("*, professionals(name, role_title, image_url)")
+    .select("*, professionals(name, role_title, image_url, verified, verification_status)")
     .single();
 
   // ponytail: starts_at column may not be migrated yet -> retry without it so the booking still persists.
@@ -487,7 +505,7 @@ export async function createBooking(payload, client) {
     ({ data, error } = await supabase
       .from("bookings")
       .insert(withoutStartsAt)
-      .select("*, professionals(name, role_title, image_url)")
+      .select("*, professionals(name, role_title, image_url, verified, verification_status)")
       .single());
   }
 
@@ -523,6 +541,10 @@ export async function updateBookingStatus(bookingId, status, client) {
     if (current && current.status === "upcoming" && current.payment_status !== "paid") {
       throw userFacing("This booking hasn't been paid yet, so the service can't be started.");
     }
+    const { data: target } = await supabase.from("bookings").select("professional_id").eq("id", bookingId).maybeSingle();
+    if (!await readProfessionalBookability(supabase, target?.professional_id)) {
+      throw userFacing("Service cannot start until this professional is verified and approved.");
+    }
     if (current && current.status === "upcoming") {
       const mapped = mapBooking(current);
       if (isBookingExpired(mapped)) {
@@ -535,7 +557,7 @@ export async function updateBookingStatus(bookingId, status, client) {
     .from("bookings")
     .update({ status })
     .eq("id", bookingId)
-    .select("*, professionals(name, role_title, image_url)")
+    .select("*, professionals(name, role_title, image_url, verified, verification_status)")
     .single();
   if (error) {
     // ponytail: the DB trigger owns the state machine; just translate its rejection for the UI.
@@ -567,7 +589,7 @@ export async function cancelBooking(bookingId, client) {
 
   const { data: row, error: readError } = await supabase
     .from("bookings")
-    .select("*, professionals(name, role_title, image_url)")
+    .select("*, professionals(name, role_title, image_url, verified, verification_status)")
     .eq("id", bookingId)
     .single();
   if (readError) throw readError;
@@ -593,7 +615,7 @@ export async function cancelBooking(bookingId, client) {
     .from("bookings")
     .update({ status: "cancelled" })
     .eq("id", bookingId)
-    .select("*, professionals(name, role_title, image_url)")
+    .select("*, professionals(name, role_title, image_url, verified, verification_status)")
     .single();
   if (error) throw error;
   return mapBooking(data);
@@ -611,6 +633,10 @@ export async function rescheduleBooking(bookingId, { date, timeSlot }, client) {
 
   if (row?.status !== "upcoming" || row?.payment_status !== "paid") {
     throw userFacing("Only paid, upcoming bookings can be rescheduled.");
+  }
+
+  if (!await readProfessionalBookability(supabase, row.professional_id)) {
+    throw userFacing("Rescheduling is unavailable until this professional is verified and approved.");
   }
 
   let timezone = null;
@@ -645,7 +671,7 @@ export async function rescheduleBooking(bookingId, { date, timeSlot }, client) {
     .from("bookings")
     .update(patch)
     .eq("id", bookingId)
-    .select("*, professionals(name, role_title, image_url)")
+    .select("*, professionals(name, role_title, image_url, verified, verification_status)")
     .single();
 
   if (error && /starts_at/.test(error.message || "")) {
@@ -655,7 +681,7 @@ export async function rescheduleBooking(bookingId, { date, timeSlot }, client) {
       .from("bookings")
       .update(withoutStartsAt)
       .eq("id", bookingId)
-      .select("*, professionals(name, role_title, image_url)")
+      .select("*, professionals(name, role_title, image_url, verified, verification_status)")
       .single());
   }
 
