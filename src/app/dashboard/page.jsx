@@ -249,7 +249,8 @@ export default function CustomerDashboardPage() {
   const filteredBookings = bookings.filter((b) => {
     const derived = getDerivedBookingStatus(b);
     if (bookingFilter === "all") return true;
-    if (bookingFilter === "upcoming") return derived === "upcoming";
+    if (bookingFilter === "payment_pending") return derived === "upcoming" && b.paymentStatus !== "paid";
+    if (bookingFilter === "upcoming") return derived === "upcoming" && b.paymentStatus === "paid";
     return b.status === bookingFilter;
   });
 
@@ -536,6 +537,7 @@ export default function CustomerDashboardPage() {
                     {[
                       { id: "all", label: "All Bookings" },
                       { id: "upcoming", label: "Upcoming" },
+                      { id: "payment_pending", label: "Payment Pending" },
                       { id: "in_progress", label: "In Progress" },
                       { id: "completed", label: "Completed" },
                       { id: "cancelled", label: "Cancelled" },
