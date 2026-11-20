@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { bookingAlertsEnabled, confirmVerifiedPaidBooking, dispatchBookingAlerts } from '../src/lib/booking-alert-outbox.js';
 const profile={id:'u',full_name:'Example',phone:'9000000001',whatsapp_consent:true};
-const row={id:'q',booking_id:'B',pilot_expires_at:'2099-01-01T00:00:00Z',claim_token:'token',user_id:'u',recipient_role:'customer',template:'bmp_booking_received',recipient_phone:profile.phone,booking:{id:'B',service_title:'Cleaning',date:'2026-11-21',time_slot:'3 PM'}};
-function db({p=profile,rows=[row],profileError=null,claimError=null,finishError=null,booking={id:'B',payment_status:'paid',status:'upcoming',date:'2026-11-21',time_slot:'3 PM',service_title:'Cleaning'}}={}) {
+const row={id:'q',booking_id:'B',pilot_expires_at:'2099-01-01T00:00:00Z',claim_token:'token',user_id:'u',recipient_role:'customer',template:'bmp_booking_received',recipient_phone:profile.phone,booking:{professional_id:'pro',id:'B',service_title:'Cleaning',date:'2026-11-21',time_slot:'3 PM'}};
+function db({p=profile,rows=[row],profileError=null,claimError=null,finishError=null,booking={professional_id:'pro',id:'B',payment_status:'paid',status:'upcoming',date:'2026-11-21',time_slot:'3 PM',service_title:'Cleaning'}}={}) {
  const finished=[];let claims=0;
- return {finished,get claims(){return claims},from(table){assert.ok(['profiles','bookings'].includes(table));return {select(){return this},eq(){return this},async maybeSingle(){return table==='bookings'?{data:booking}:{data:p,error:profileError}}}},async rpc(name,args){
+ return {finished,get claims(){return claims},from(table){assert.ok(['profiles','bookings','professionals'].includes(table));return {select(){return this},eq(){return this},async maybeSingle(){return table==='professionals'?{data:{verified:true,verification_status:'approved'}}:table==='bookings'?{data:booking}:{data:p,error:profileError}}}},async rpc(name,args){
   if(name==='expand_booking_alert_receipts')return {data:{expanded:0,errors:0}};
   if(name==='claim_booking_alert'){claims++;return {data:rows.shift()||null,error:claimError}}
   assert.equal(name,'finish_booking_alert');finished.push(args);return {data:!finishError,error:finishError};
