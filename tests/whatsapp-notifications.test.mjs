@@ -1,3 +1,4 @@
+const eligibleClient = { from() { return { select() { return this; }, eq() { return this; }, async maybeSingle() { return { data: { verified: true, verification_status: 'approved' } }; } }; } };
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -94,6 +95,7 @@ test('dispatchBookingConfirmedNotifications prevents duplicate confirmation disp
   const uniqueBookingId = `BMP-TEST-DEDUPE-${Date.now()}`;
   const mockBooking = {
     id: uniqueBookingId,
+    professional_id: "pro",
     service_title: 'AC Servicing',
     total_paid: 1299,
     date: '2026-11-05',
@@ -102,12 +104,12 @@ test('dispatchBookingConfirmedNotifications prevents duplicate confirmation disp
   };
 
   // First call should process
-  const firstResult = await dispatchBookingConfirmedNotifications(mockBooking, null);
+  const firstResult = await dispatchBookingConfirmedNotifications(mockBooking, eligibleClient);
   assert.equal(firstResult.success, true);
   assert.equal(firstResult.deduplicated, undefined);
 
   // Immediate second call for the same booking ID MUST be deduplicated
-  const secondResult = await dispatchBookingConfirmedNotifications(mockBooking, null);
+  const secondResult = await dispatchBookingConfirmedNotifications(mockBooking, eligibleClient);
   assert.equal(secondResult.success, true);
   assert.equal(secondResult.deduplicated, true);
 });
