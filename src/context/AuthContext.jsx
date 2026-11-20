@@ -18,6 +18,7 @@ function mapUser(authUser, profile) {
     role: profile?.role || meta.role || "customer",
     avatar: profile?.avatar_url || null,
     whatsapp_consent: Boolean(profile?.whatsapp_consent ?? meta.whatsapp_consent),
+    onboarding_completed_at: profile?.onboarding_completed_at || null,
     user_metadata: meta,
   };
 }
