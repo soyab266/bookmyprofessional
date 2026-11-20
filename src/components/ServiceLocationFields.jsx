@@ -7,7 +7,7 @@ export default function ServiceLocationFields({ profile, setProfile, result, onV
   const location = verifiedServiceLocation(profile.pincode, result);
   const status = String(profile.pincode || "").length === 6
     ? (result ? "Location unavailable. Check service pincode." : "Checking service pincode...")
-    : "Enter a valid service pincode";
+    : "Auto-filled from pincode";
   return <>
     <div>
       <PincodeInput
