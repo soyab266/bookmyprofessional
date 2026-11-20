@@ -167,7 +167,7 @@ function applyFilters(query, opts) {
   let q = applySearch(query, opts.search);
 
   // Browse-directory reads only: unverified professionals stay out of the public
-  // directory and its counts. Featured/homepage reads leave this off.
+  // directory and its counts. Only separate Featured reads leave this off.
   if (opts.verifiedOnly) q = q.eq("verified", true).eq("verification_status", "approved");
 
   if (opts.category && opts.category !== "all") q = q.ilike("category", opts.category);
@@ -224,7 +224,7 @@ function clientFilter(rows, opts) {
   return rows.filter((pro) => {
     if (pro.isActive === false) return false;
     // Browse-directory reads only: unverified professionals stay out of the public
-    // directory and its counts. Featured/homepage reads leave this off.
+    // directory and its counts. Only separate Featured reads leave this off.
     if (opts.verifiedOnly && !(pro.verified === true && pro.verificationStatus === "approved")) return false;
 
     if (opts.search && opts.search.trim()) {
