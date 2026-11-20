@@ -333,6 +333,30 @@ function BookingPageContent({ params }) {
     );
   }
 
+  if (matchedPro && !(matchedPro.verified && matchedPro.verificationStatus === "approved")) {
+    return (
+      <div className="flex min-h-screen flex-col bg-background text-dark-800">
+        <Navbar />
+        <main className="flex-1 flex items-center justify-center p-8 text-center">
+          <div>
+            <h1 className="font-heading text-2xl font-bold text-dark-900">
+              Booking not available yet
+            </h1>
+            <p className="text-sm text-dark-500 mt-2">
+              This professional&apos;s verification is still in progress. Booking opens once their profile is verified.
+            </p>
+            <Link
+              href="/professionals"
+              className="inline-flex items-center justify-center mt-5 px-5 py-2.5 rounded-xl bg-primary-500 hover:bg-primary-600 text-white text-xs font-semibold shadow-button transition-colors"
+            >
+              Browse Verified Professionals
+            </Link>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-background text-dark-800">
       <Navbar />
