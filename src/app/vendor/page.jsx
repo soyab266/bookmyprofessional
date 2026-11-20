@@ -31,7 +31,8 @@ import { formatInclusions } from "@/lib/inclusions";
 import { SERVICE_AREA_CITIES } from "@/lib/service-areas";
 import { uploadImage, ikImage } from "@/lib/imagekit";
 import { cleanPincode, isValidPincodeFormat } from "@/lib/pincode";
-import PincodeInput from "@/components/PincodeInput";
+import ServiceLocationFields from "@/components/ServiceLocationFields";
+import { verifiedServiceLocation } from "@/lib/registration-service-location";
 import WhatsAppConsentSettings from "@/components/WhatsAppConsentSettings";
 import { cleanPhone } from "@/lib/phone";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -256,6 +257,7 @@ export default function VendorPortalPage() {
   const [docType, setDocType] = useState("Government ID");
 
   // Services, qualifications & experience
+  const [serviceLocationResult, setServiceLocationResult] = useState(null);
   const [vendorProfile, setVendorProfile] = useState({
     experienceYears: 0,
     specialty: "",
@@ -748,11 +750,16 @@ export default function VendorPortalPage() {
         return;
       }
     }
+    const serviceLocation = verifiedServiceLocation(vendorProfile.pincode, serviceLocationResult);
+    if (vendorProfile.pincode && !serviceLocation) {
+      showToast("Wait for a successful lookup of your current service pincode before saving.", "error");
+      return;
+    }
     try {
       const result = await updateVendorBasics(user.id, {
         experienceYears: Number(vendorProfile.experienceYears) || 0,
         specialty: vendorProfile.specialty,
-        city: vendorProfile.city,
+        city: serviceLocation?.city || "",
         pincode: cleanPincode(vendorProfile.pincode),
         hourlyRate: Number(vendorProfile.hourlyRate) || 0,
         category: vendorProfile.category,
@@ -1922,51 +1929,12 @@ export default function VendorPortalPage() {
                           className="w-full px-3.5 py-2.5 bg-dark-50 border border-border rounded-xl text-xs text-dark-900 focus:bg-white focus:outline-none focus:border-primary-500"
                         />
                       </div>
-                      <div>
-                        <PincodeInput
-                          value={vendorProfile.pincode || ""}
-                          onChange={(val) => {
-                            setVendorProfile((prev) => ({
-                              ...prev,
-                              pincode: val,
-                              city: val.length < 6 ? "" : prev.city,
-                              state: val.length < 6 ? "" : prev.state,
-                            }));
-                          }}
-                          onCityDetected={(detectedCity, res) => {
-                            setVendorProfile((prev) => ({
-                              ...prev,
-                              city: detectedCity,
-                              state: res?.state || prev.state || "",
-                            }));
-                          }}
-                          enforceLocationMatch={false}
-                          label="Service Pincode"
-                          placeholder="e.g. 501218"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-semibold text-dark-700 mb-1.5">
-                          Service City & State
-                        </label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            readOnly
-                            value={
-                              vendorProfile.city
-                                ? `${vendorProfile.city}${vendorProfile.state ? `, ${vendorProfile.state}` : ""}`
-                                : ""
-                            }
-                            placeholder="Auto-filled from Pincode"
-                            className="w-full pl-3 pr-8 py-2.5 bg-dark-100 border border-border rounded-xl text-xs text-dark-900 cursor-not-allowed font-medium"
-                          />
-                          <Lock className="absolute right-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-dark-400" />
-                        </div>
-                        <p className="text-[10px] text-dark-400 mt-1">
-                          Locked to your verified service pincode.
-                        </p>
-                      </div>
+                      <ServiceLocationFields
+                        profile={vendorProfile}
+                        result={serviceLocationResult}
+                        setProfile={setVendorProfile}
+                        onVerified={setServiceLocationResult}
+                      />
                     <div className="mt-4 sm:col-span-2">
                       <label className="block text-xs font-semibold text-dark-700 mb-1.5">
                         Areas served
@@ -2693,4 +2661,4 @@ export default function VendorPortalPage() {
       </main>
     </div>
   );
-              }
+                                  }
