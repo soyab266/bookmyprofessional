@@ -19,3 +19,12 @@ test('profile save uses lookup-bound location and blocks stale lookup instead of
   assert.match(s,/vendorProfile.pincode && !serviceLocation/);
   assert.match(s,/city: serviceLocation\?\.city \|\| ""/);
 });
+
+test('profile location layout pairs fields and hides focus editor without removing stored specialty',()=>{
+ const page=read('src/app/vendor/page.jsx');const fields=read('src/components/ServiceLocationFields.jsx');
+ assert.match(fields,/Auto-filled from pincode/);
+ assert.match(page,/col-span-full lg:col-span-2 grid grid-cols-2 gap-4 items-start/);
+ assert.doesNotMatch(page,/Key Focus Area \/ Bio Line/);
+ assert.match(page,/specialty: vendorProfile.specialty/);
+ assert.match(fields,/location\.city/);
+});
