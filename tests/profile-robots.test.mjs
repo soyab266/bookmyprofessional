@@ -2,17 +2,21 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { buildProfileMetadata } from "../src/lib/profile-metadata.js";
+import { confirmPublicProfileStatus } from "../src/lib/confirm-public-profile-status.js";
 
 const source = await readFile(new URL("../src/app/professionals/[id]/layout.jsx", import.meta.url), "utf8");
 const executable = source.replace(/^import .*;\n/gm, "").replace(/export default /g, "").replace(/export /g, "");
 const id = "22525cf7-47b7-4960-8158-ebcf0c8f1c71";
-function route(status) {
-  return new Function("cache", "readUncachedPublicProfileStatus", "readPublicProfileMetadata", "buildProfileMetadata", "notFound", `${executable}; return { generateMetadata, ProfessionalProfileLayout };`)(
+function route(status, rows = []) {
+  const q = { from: () => q, select: () => q, eq: () => q, limit: () => q, abortSignal: async () => ({ data: rows, error: null }) };
+  return new Function("cache", "readUncachedPublicProfileStatus", "readPublicProfileMetadata", "buildProfileMetadata", "notFound", "confirmPublicProfileStatus", "createAdminClient", `${executable}; return { generateMetadata, ProfessionalProfileLayout };`)(
     fn => { let result; return (...args) => result ??= fn(...args); },
     async () => status,
     async () => ({ name: "Example Doctor", category: "Doctor", city: "Example City" }),
     buildProfileMetadata,
     () => { throw new Error("NOT_FOUND"); },
+    confirmPublicProfileStatus,
+    () => q,
   );
 }
 
@@ -36,5 +40,13 @@ for (const status of ["found", "unknown"]) {
 
 test("metadata and layout share request-scoped status cache", () => {
   assert.match(source, /import \{ cache \} from "react"/);
-  assert.match(source, /const readPublicProfileStatus = cache\(readUncachedPublicProfileStatus\)/);
+  assert.match(source, /const readPublicProfileStatus = cache\(\(id\) => confirmPublicProfileStatus/);
+});
+
+test('RLS-hidden existing pending UUID retains profile body and avoids false noindex', async () => {
+  const r = route('missing', [{ id }]);
+  const params = Promise.resolve({ id });
+  const metadata = await r.generateMetadata({ params });
+  assert.equal(Object.hasOwn(metadata, 'robots'), false);
+  assert.equal(await r.ProfessionalProfileLayout({ params, children: 'pending profile' }), 'pending profile');
 });
