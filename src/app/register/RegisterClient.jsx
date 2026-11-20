@@ -24,6 +24,7 @@ import Button from "@/components/Button";
 import { cleanPincode, isValidPincodeFormat } from "@/lib/pincode";
 import { cleanPhone, isValidIndianPhone } from "@/lib/phone";
 import PincodeInput from "@/components/PincodeInput";
+import { verifiedServiceLocation } from "@/lib/registration-service-location";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -66,7 +67,8 @@ export default function RegisterPage() {
     password: "",
     category: "Doctors",
     subcategory: "",
-    city: "Mumbai",
+    city: "",
+    state: "",
     pincode: "",
     agreeTerms: false,
     agreeWhatsApp: false,
@@ -141,8 +143,8 @@ export default function RegisterPage() {
         setErrorMessage("Please enter a valid 6-digit Indian pincode (cannot start with 0).");
         return;
       }
-      if (proPincodeVerification && !proPincodeVerification.valid) {
-        setErrorMessage(proPincodeVerification.error || "Please enter a valid, verified Indian pincode.");
+      if (!verifiedServiceLocation(cleanPin, proPincodeVerification)) {
+        setErrorMessage(proPincodeVerification?.error || "Please wait for your service pincode to identify a city before continuing.");
         return;
       }
     }
@@ -514,20 +516,15 @@ export default function RegisterPage() {
                   <PincodeInput
                     value={form.pincode || ""}
                     onChange={(val) => {
-                      setForm((prev) => ({
-                        ...prev,
-                        pincode: val,
-                        city: val.length < 6 ? "" : prev.city,
-                        state: val.length < 6 ? "" : prev.state,
-                      }));
+                      setProPincodeVerification(null);
+                      setForm((prev) => ({ ...prev, pincode: val, city: "", state: "" }));
                     }}
-                    onVerified={(res) => setProPincodeVerification(res)}
-                    onCityDetected={(detectedCity, res) => {
-                      setForm((prev) => ({
-                        ...prev,
-                        city: detectedCity,
-                        state: res?.state || prev.state || "",
-                      }));
+                    onVerified={(res) => {
+                      setProPincodeVerification(res);
+                      setForm((prev) => {
+                        const location = verifiedServiceLocation(prev.pincode, res);
+                        return { ...prev, city: location?.city || "", state: location?.state || "" };
+                      });
                     }}
                     enforceLocationMatch={false}
                     label="Service Pincode"
@@ -535,21 +532,7 @@ export default function RegisterPage() {
                     required
                   />
                 </div>
-                <div>
-                  <label className="block text-[11px] font-bold text-primary-900 mb-1">
-                    City of Service & State
-                  </label>
-                  <div className="relative">
-                    <MapPin className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-primary-500" />
-                    <input
-                      type="text"
-                      readOnly
-                      value={form.city ? `${form.city}${form.state ? `, ${form.state}` : ""}` : ""}
-                      placeholder="Auto-filled from Pincode"
-                      className="w-full pl-8 pr-3 py-2 bg-dark-100 border border-primary-200 rounded-xl text-xs text-dark-900 cursor-not-allowed font-medium focus:outline-none"
-                    />
-                  </div>
-                </div>
+
               </div>
             )}
 
