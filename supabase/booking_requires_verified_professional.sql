@@ -1,7 +1,7 @@
 -- Bookings may only be created for verified, approved professionals.
 -- Apply to every booking insert and professional reassignment, including service-role writes.
 create or replace function public.enforce_booking_verified_professional() returns trigger
-language plpgsql as $$
+language plpgsql security definer set search_path=public,pg_temp as $$
 declare
   pro_verified boolean;
   pro_status text;
