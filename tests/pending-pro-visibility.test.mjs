@@ -72,7 +72,7 @@ test("migration enforces verified professionals at the database and rollback is 
   assert.doesNotMatch(sql, /auth\.uid\(\) is null/);
   assert.match(sql, /pro_status is distinct from 'approved'/);
   assert.match(sql, /raise exception 'bookings require a verified professional'/);
-  assert.match(sql, /before insert or update of professional_id on public\.bookings/);
+  assert.match(sql, /before insert or update on public\.bookings/);
   const rollback = await readFile(new URL("../supabase/booking_requires_verified_professional_rollback.sql", import.meta.url), "utf8");
   assert.match(rollback, /drop trigger if exists bookings_verified_professional_guard on public\.bookings/);
   assert.match(rollback, /drop function if exists public\.enforce_booking_verified_professional\(\)/);
