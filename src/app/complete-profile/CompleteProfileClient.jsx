@@ -94,7 +94,12 @@ export default function CompleteProfileClient() {
         .eq("id", user.id);
       if (error) throw error;
       showToast?.("Mobile number saved.", "success");
-      router.replace(destination);
+      // Hard navigation, not router.replace: AuthContext hydrates the profile
+      // only on session restore / auth-state change, so a client-side
+      // transition would evaluate the destination's onboarding guard against
+      // the PRE-SAVE profile (no phone, no marker) and loop straight back
+      // here. A full document load re-reads the just-saved row.
+      window.location.assign(destination);
     } catch (err) {
       setErrorMessage(err?.message || "Could not save your number. Please try again.");
       setIsSaving(false);
