@@ -88,11 +88,20 @@ export default function CompleteProfileClient() {
         onboarding_completed_at: new Date().toISOString(),
       };
       if (agreeWhatsApp) update.whatsapp_consent = true;
-      const { error } = await supabase
+      const { data: updatedRows, error } = await supabase
         .from("profiles")
         .update(update)
-        .eq("id", user.id);
+        .eq("id", user.id)
+        .select("id");
       if (error) throw error;
+      // An UPDATE matching no row is not an error in PostgREST: without this
+      // check, a session whose account was deleted (no profiles row) would
+      // show a success toast for a save that never happened.
+      if (!updatedRows || updatedRows.length === 0) {
+        throw new Error(
+          "This account is no longer available. Please sign in again."
+        );
+      }
       showToast?.("Mobile number saved.", "success");
       // Hard navigation, not router.replace: AuthContext hydrates the profile
       // only on session restore / auth-state change, so a client-side
