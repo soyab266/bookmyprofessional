@@ -43,6 +43,7 @@ export async function POST(req) {
         .from('bookings')
         .select('id')
         .eq('status', 'upcoming')
+        .eq('payment_status', 'paid')
         .gte('scheduled_at', from)
         .lte('scheduled_at', to);
 
@@ -58,7 +59,8 @@ export async function POST(req) {
       .from('bookings')
       .select('*')
       .in('id', bookingIds)
-      .eq('status', 'upcoming');
+      .eq('status', 'upcoming')
+      .eq('payment_status', 'paid');
 
     if (bErr) throw bErr;
 

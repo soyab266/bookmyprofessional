@@ -38,6 +38,7 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { createClient } from "@/lib/supabase/client";
 import { generateSlotsForDay, formatTime24to12 } from "@/lib/data/bookings";
 import { getDerivedBookingStatus, isBookingExpired } from "@/lib/datetime";
+import { getBookingStatusLabel } from "@/lib/booking-payment-label";
 import {
   DollarSign,
   Building2,
@@ -1398,7 +1399,7 @@ export default function VendorPortalPage() {
                             <span className="text-xs text-dark-700 font-bold">{b.serviceTitle}</span>
                           </div>
                           <span className="text-xs font-bold text-primary-600 uppercase">
-                            Status: {getDerivedBookingStatus(b).replace("_", " ")}
+                            Status: {getBookingStatusLabel(b, getDerivedBookingStatus(b))}
                           </span>
                         </div>
 
@@ -1447,6 +1448,11 @@ export default function VendorPortalPage() {
                               if (derivedStatus === "missed") return (
                                 <span className="text-xs text-orange-700 font-semibold bg-orange-50 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
                                   <AlertCircle className="w-3.5 h-3.5" /> Missed — Contact Customer
+                                </span>
+                              );
+                              if (derivedStatus === "upcoming" && b.paymentStatus !== "paid") return (
+                                <span className="text-xs text-amber-700 font-semibold bg-amber-50 px-3 py-1.5 rounded-xl flex items-center gap-1.5">
+                                  <Clock className="w-3.5 h-3.5" /> Awaiting customer payment
                                 </span>
                               );
                               if (derivedStatus === "upcoming") return (
@@ -2687,4 +2693,4 @@ export default function VendorPortalPage() {
       </main>
     </div>
   );
-}
+              }

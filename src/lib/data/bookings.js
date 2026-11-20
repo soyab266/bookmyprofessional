@@ -517,9 +517,12 @@ export async function updateBookingStatus(bookingId, status, client) {
   if (status === "in_progress") {
     const { data: current } = await supabase
       .from("bookings")
-      .select("starts_at, date, time_slot, status")
+      .select("starts_at, date, time_slot, status, payment_status")
       .eq("id", bookingId)
       .maybeSingle();
+    if (current && current.status === "upcoming" && current.payment_status !== "paid") {
+      throw userFacing("This booking hasn't been paid yet, so the service can't be started.");
+    }
     if (current && current.status === "upcoming") {
       const mapped = mapBooking(current);
       if (isBookingExpired(mapped)) {
