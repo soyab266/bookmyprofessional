@@ -1,6 +1,6 @@
 // Only fields displayed on public directory cards. No account/contact data,
 // credential documents, review identities/comments, or service descriptions.
-export const DIRECTORY_FIELDS = "id,name,role_title,category,subcategory,city,bio,experience_years,hourly_rate,unit,response_time,image_url,verification_status,services(id),reviews(rating)";
+export const DIRECTORY_FIELDS = "id,name,role_title,category,subcategory,city,bio,experience_years,hourly_rate,unit,response_time,image_url,verified,verification_status,services(id),reviews(rating)";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const DIRECTORY_PAGE_SIZE = 8;
 
@@ -20,6 +20,7 @@ export function directoryCard(row) {
     image: row.image_url || "", experienceYears: row.experience_years || 0,
     price: Number(row.hourly_rate) || 0, unit: row.unit || "hour",
     responseTime: row.response_time || "", verificationStatus: row.verification_status || "not_submitted",
+    verified: row.verified === true && row.verification_status === "approved",
     rating: Math.round(average * 10) / 10, reviewCount: reviews.length,
     services: (row.services || []).map(service => ({ id: service.id })),
   };
