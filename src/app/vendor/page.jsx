@@ -1916,27 +1916,15 @@ export default function VendorPortalPage() {
                         />
                       </div>
 
-                      {/* Specialty / Focus Area */}
-                      <div>
-                        <label className="block text-xs font-semibold text-dark-700 mb-1.5">
-                          Key Focus Area / Bio Line
-                        </label>
-                        <input
-                          type="text"
-                          value={vendorProfile.specialty}
-                          onChange={(e) =>
-                            setVendorProfile({ ...vendorProfile, specialty: e.target.value })
-                          }
-                          placeholder="e.g. Heart surgery & angioplasty"
-                          className="w-full px-3.5 py-2.5 bg-dark-50 border border-border rounded-xl text-xs text-dark-900 focus:bg-white focus:outline-none focus:border-primary-500"
-                        />
-                      </div>
+                      {/* Focus area remains stored, but is not shown in this editor. */}
+                      <div className="col-span-full lg:col-span-2 grid grid-cols-2 gap-4 items-start">
                       <ServiceLocationFields
                         profile={vendorProfile}
                         result={serviceLocationResult}
                         setProfile={setVendorProfile}
                         onVerified={setServiceLocationResult}
                       />
+                      </div>
                     <div className="mt-4 sm:col-span-2">
                       <label className="block text-xs font-semibold text-dark-700 mb-1.5">
                         Areas served
