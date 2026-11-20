@@ -229,7 +229,9 @@ export async function GET(request) {
     // Brand-new Google accounts have no phone (Google does not share one):
     // collect it immediately so the profile is complete and an opted-in
     // WhatsApp welcome can find its number. Existing users signing in again
-    // keep their previous behavior and never see this step.
+    // keep their previous behavior and never see this step. Whether the step
+    // REQUIRES the WhatsApp agreement is decided durably from the profile's
+    // onboarding_completed_at marker, never from a URL parameter.
     const finalDestination = existingProfile
       ? destination
       : `/complete-profile?next=${encodeURIComponent(destination)}`;
