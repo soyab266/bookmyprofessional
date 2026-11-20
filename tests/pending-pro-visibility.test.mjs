@@ -69,9 +69,10 @@ test("createBooking re-checks verification against the database, not the client-
 test("migration enforces verified professionals at the database and rollback is a clean drop", async () => {
   const sql = await readFile(new URL("../supabase/booking_requires_verified_professional.sql", import.meta.url), "utf8");
   assert.match(sql, /create or replace function public\.enforce_booking_verified_professional\(\) returns trigger/);
-  assert.match(sql, /if auth\.uid\(\) is null then return new; end if;/);
+  assert.doesNotMatch(sql, /auth\.uid\(\) is null/);
+  assert.match(sql, /pro_status is distinct from 'approved'/);
   assert.match(sql, /raise exception 'bookings require a verified professional'/);
-  assert.match(sql, /before insert on public\.bookings/);
+  assert.match(sql, /before insert or update of professional_id on public\.bookings/);
   const rollback = await readFile(new URL("../supabase/booking_requires_verified_professional_rollback.sql", import.meta.url), "utf8");
   assert.match(rollback, /drop trigger if exists bookings_verified_professional_guard on public\.bookings/);
   assert.match(rollback, /drop function if exists public\.enforce_booking_verified_professional\(\)/);
