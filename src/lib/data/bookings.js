@@ -411,6 +411,22 @@ export async function createBooking(payload, client) {
     throw userFacing("You cannot book your own service.");
   }
 
+  // Re-check verification against the database — the passed pro object is
+  // client-controlled and must never be the only gate for booking creation.
+  if (pro?.id) {
+    const { data: proRow, error: proLookupError } = await supabase
+      .from("professionals")
+      .select("id, verified, verification_status")
+      .eq("id", pro.id)
+      .maybeSingle();
+    if (proLookupError || !proRow) {
+      throw userFacing("This professional is not available for booking.");
+    }
+    if (!(proRow.verified === true && proRow.verification_status === "approved")) {
+      throw userFacing("This professional's verification is still in progress. Booking opens once their profile is verified.");
+    }
+  }
+
   // Server-side pincode and city validation for booking address
   const explicitPin = payload.pincode ? String(payload.pincode).trim().replace(/\D/g, "").slice(0, 6) : null;
   // If not explicit, try to extract 6-digit PIN from address string
@@ -517,9 +533,12 @@ export async function updateBookingStatus(bookingId, status, client) {
   if (status === "in_progress") {
     const { data: current } = await supabase
       .from("bookings")
-      .select("starts_at, date, time_slot, status")
+      .select("starts_at, date, time_slot, status, payment_status")
       .eq("id", bookingId)
       .maybeSingle();
+    if (current && current.status === "upcoming" && current.payment_status !== "paid") {
+      throw userFacing("This booking hasn't been paid yet, so the service can't be started.");
+    }
     if (current && current.status === "upcoming") {
       const mapped = mapBooking(current);
       if (isBookingExpired(mapped)) {
