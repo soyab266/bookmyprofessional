@@ -1,3 +1,4 @@
+import { readProfessionalBookability } from './professional-booking-eligibility.js';
 import { sendUserEmail } from './email.js';
 import { notifyBookingConfirmed } from './whatsapp.js';
 import { bookingAlertsEnabled } from './booking-alert-outbox.js';
@@ -23,6 +24,10 @@ const recentlyNotifiedBookings = new Set();
  */
 export async function dispatchBookingConfirmedNotifications(booking, supabase, deps) {
   if (!booking?.id) return { success: false, reason: 'missing_booking_id' };
+
+  if (!await readProfessionalBookability(supabase, booking.professional_id)) {
+    return { success: false, reason: 'professional_verification_required' };
+  }
 
   // 1. In-memory deduplication check
   if (recentlyNotifiedBookings.has(booking.id)) {
