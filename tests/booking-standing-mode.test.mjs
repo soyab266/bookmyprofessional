@@ -1,22 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dispatchBookingAlerts, isMetaBillingFailure, notifyOwnerBillingPause, pauseStandingBookings } from '../src/lib/booking-alert-outbox.js';
+import { bookingStartIST, dispatchBookingAlerts, isMetaBillingFailure, notifyOwnerBillingPause, pauseStandingBookings } from '../src/lib/booking-alert-outbox.js';
 
 const profile = { id: 'u', full_name: 'Example', phone: '9000000001', whatsapp_consent: true };
+const NOW = new Date().toISOString();
+const FUTURE_DATE = '2099-01-01';
 // Standing row: pilot_expires_at null, no pilot scope, template v2 snapshot.
-const standingRow = { id: 'q', booking_id: 'B', pilot_expires_at: null, pilot_armed_at: null, claim_token: 'token', user_id: 'u', recipient_role: 'customer', template: 'bmp_booking_details_v2', recipient_phone: profile.phone, booking: { id: 'B', service_title: 'Cleaning', date: '2026-11-21', time_slot: '3 PM', customer_id: 'u', professional_id: 'pro', address: 'TEST address', total_paid: '500.00', template_version: 2 } };
+const standingRow = { id: 'q', booking_id: 'B', created_at: NOW, pilot_expires_at: null, pilot_armed_at: null, claim_token: 'token', user_id: 'u', recipient_role: 'customer', template: 'bmp_booking_details_v2', recipient_phone: profile.phone, booking: { id: 'B', service_title: 'Cleaning', date: FUTURE_DATE, time_slot: '3:00 PM', customer_id: 'u', professional_id: 'pro', address: 'TEST address', total_paid: '500.00', template_version: 2, alert_created_at: NOW } };
 
-function db({ p = profile, rows = [standingRow], standingUpdates = [], booking = { ...standingRow.booking, payment_status: 'paid', status: 'upcoming' } } = {}) {
+function db({ p = profile, groups = [[standingRow]], standingUpdates = [], booking = { ...standingRow.booking, payment_status: 'paid', status: 'upcoming' } } = {}) {
   const finished = []; let claims = 0; const rpcCalls = [];
   return { finished, rpcCalls, standingUpdates, get claims() { return claims },
-    from(table) { assert.ok(['profiles', 'bookings', 'professionals', 'booking_alert_standing'].includes(table)); let id;
+    from(table) { assert.ok(['profiles', 'bookings', 'professionals', 'booking_alert_standing', 'booking_alert_outbox'].includes(table)); let id;
       return { select() { return this }, eq(k, v) { id = v; return this },
         update(v) { assert.equal(table, 'booking_alert_standing'); standingUpdates.push(v); return this },
         async maybeSingle() { return table === 'professionals' ? { data: { verified: true, verification_status: 'approved' } } : table === 'bookings' ? { data: booking } : { data: p } } } },
     async rpc(name, args) {
       rpcCalls.push(name);
       if (name === 'expand_booking_alert_receipts') return { data: { expanded: 0, errors: 0 } };
-      if (name === 'claim_booking_alert') { claims++; return { data: rows.shift() || null, error: null } }
+      if (name === 'claim_booking_alert') { claims++; const g = groups.shift(); return { data: g ? { rows: g, pilot_expires_at: null } : null, error: null } }
       assert.equal(name, 'finish_booking_alert'); finished.push(args); return { data: true, error: null };
     } };
 }
@@ -37,6 +39,14 @@ test('standing row sends without pilot scope RPC', async () => {
   assert.ok(!r.sb.rpcCalls.includes('booking_alert_scope_allows'), 'scope RPC must not run for standing rows');
 });
 
+test('standing group sends both pair members from one claim', async () => {
+  const pro = { ...standingRow, id: 'q2', recipient_role: 'professional', template: 'bmp_professional_booking_details_v2' };
+  const r = await run({ groups: [[standingRow, pro]] });
+  assert.equal(r.sb.claims, 2, 'one group claim plus the final empty claim');
+  assert.equal(r.sends, 2);
+  assert.deepEqual(r.sb.finished.map((f) => f.p_status), ['accepted', 'accepted']);
+});
+
 test('standing row skips scope check but keeps live consent guard', async () => {
   const r = await run({ p: { ...profile, whatsapp_consent: false } });
   assert.equal(r.sends, 0);
@@ -51,11 +61,38 @@ test('standing row skipped when booking changed after claim', async () => {
   assert.equal(r.finish.p_release, true);
 });
 
-test('pilot rows keep pilot guards', async () => {
-  const r = await run({ rows: [{ ...standingRow, pilot_expires_at: '2020-01-01T00:00:00Z', pilot_armed_at: '2019-01-01T00:00:00Z' }] });
+test('pilot rows keep pilot guards and skip standing expiry guards', async () => {
+  const r = await run({ groups: [[{ ...standingRow, pilot_expires_at: '2020-01-01T00:00:00Z', pilot_armed_at: '2019-01-01T00:00:00Z' }]] });
   assert.equal(r.sends, 0);
   assert.equal(r.finish.p_status, 'skipped');
   assert.equal(r.finish.p_error, 'pilot_expired');
+});
+
+test('row older than the notification age bound expires unsent with allowance back', async () => {
+  const old = new Date(Date.now() - 3 * 3600e3).toISOString();
+  const stale = { ...standingRow, booking: { ...standingRow.booking, alert_created_at: old } };
+  const r = await run({ groups: [[stale]] });
+  assert.equal(r.sends, 0);
+  assert.equal(r.finish.p_status, 'skipped');
+  assert.equal(r.finish.p_error, 'expired_notification_age');
+  assert.equal(r.finish.p_release, true);
+});
+
+test('row whose appointment already started expires unsent', async () => {
+  const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  const started = { ...standingRow, booking: { ...standingRow.booking, date: today, time_slot: '12:01 AM' } };
+  const r = await run({ groups: [[started]], booking: { ...started.booking, payment_status: 'paid', status: 'upcoming' } });
+  assert.equal(r.sends, 0);
+  assert.equal(r.finish.p_error, 'booking_started');
+  assert.equal(r.finish.p_release, true);
+});
+
+test('past booking date with an unparseable slot falls back to the date guard', async () => {
+  const past = { ...standingRow, booking: { ...standingRow.booking, date: '2000-01-01', time_slot: 'whenever' } };
+  const r = await run({ groups: [[past]], booking: { ...past.booking, payment_status: 'paid', status: 'upcoming' } });
+  assert.equal(r.sends, 0);
+  assert.equal(r.finish.p_error, 'booking_date_passed');
+  assert.equal(r.finish.p_release, true);
 });
 
 test('billing classifier is narrow', () => {
@@ -68,13 +105,20 @@ test('billing classifier is narrow', () => {
   assert.equal(isMetaBillingFailure(null), false);
 });
 
-test('billing rejection holds row, pauses standing, stops the run', async () => {
-  const r = await run({ rows: [standingRow, { ...standingRow, id: 'q2' }] }, { success: false, status: 400, error: '{"error":{"code":131042}}' });
+test('billing rejection holds the attempted row, releases the unattempted pair half, pauses, stops', async () => {
+  const pro = { ...standingRow, id: 'q2', recipient_role: 'professional', template: 'bmp_professional_booking_details_v2' };
+  const r = await run({ groups: [[standingRow, pro], [standingRow]] }, { success: false, status: 400, error: '{"error":{"code":131042}}' });
   assert.equal(r.sends, 1, 'must stop after the billing rejection, never keep claiming');
-  assert.equal(r.sb.claims, 1);
+  assert.equal(r.sb.claims, 1, 'one group claim; the second group is never claimed after a billing stop');
   assert.equal(r.finish.p_status, 'failed');
   assert.equal(r.finish.p_error, 'meta_billing_failure');
   assert.equal(r.finish.p_release, false);
+  assert.equal(r.sb.finished.length, 2, 'attempted row plus its unattempted pair half');
+  for (const sib of r.sb.finished.slice(1)) {
+    assert.equal(sib.p_status, 'skipped');
+    assert.equal(sib.p_error, 'not_attempted_billing_pause');
+    assert.equal(sib.p_release, true, 'no Meta request was made, allowance goes back');
+  }
   assert.equal(r.summary.paused, 'meta_billing_failure');
   assert.deepEqual(r.sb.standingUpdates.length, 1);
   assert.equal(r.sb.standingUpdates[0].paused, true);
@@ -89,24 +133,20 @@ test('non-billing rejection stays uncertain and never pauses', async () => {
   assert.equal(r.summary.paused, undefined);
 });
 
+test('idle claim reports the pending backlog for monitoring', async () => {
+  const r = await run({ groups: [] });
+  assert.equal(r.sends, 0);
+  assert.equal(r.summary.pending_remaining, null, 'mock has no count; live supabase returns the pending count');
+});
+
 test('pause write is best-effort and never throws', async () => {
   const bad = { from() { return { update() { return this }, eq() { throw new Error('db down') } } } };
   await pauseStandingBookings(bad, 'meta_billing_failure');
 });
 
-test('stale row from a past booking date expires unsent and releases the allowance', async () => {
-  const stale = { ...standingRow, booking: { ...standingRow.booking, date: '2000-01-01' } };
-  const r = await run({ rows: [stale], booking: { ...stale.booking, payment_status: 'paid', status: 'upcoming' } });
-  assert.equal(r.sends, 0);
-  assert.equal(r.finish.p_status, 'skipped');
-  assert.equal(r.finish.p_error, 'booking_date_passed');
-  assert.equal(r.finish.p_release, true);
-  assert.equal(r.summary.skipped, 1);
-});
-
 test('billing rejection emails the owner once via the injected notifier', async () => {
   process.env.META_WHATSAPP_BOOKINGS_ENABLED = 'true';
-  const sb = db({ rows: [standingRow, { ...standingRow, id: 'q2' }] });
+  const sb = db({ groups: [[standingRow]] });
   let notices = 0;
   const summary = await dispatchBookingAlerts(sb, {
     send: async () => ({ success: false, status: 402 }),
@@ -126,4 +166,13 @@ test('owner notice is skipped without an address and never throws on failure', a
   assert.equal(called, 1);
   const failed = await notifyOwnerBillingPause({ env: { BOOKING_ALERT_OWNER_EMAIL: 'owner@example.com' }, sendEmail: async () => { throw new Error('brevo down'); } });
   assert.equal(failed, false);
+});
+
+test('bookingStartIST parses slots and rejects junk', () => {
+  assert.equal(bookingStartIST('2026-11-22', '3:00 PM'), Date.UTC(2026, 10, 22, 15, 0) - 5.5 * 3600e3);
+  assert.equal(bookingStartIST('2026-11-22', '12 AM'), Date.UTC(2026, 10, 22, 0, 0) - 5.5 * 3600e3);
+  assert.equal(bookingStartIST('2026-11-22', '12:30 PM'), Date.UTC(2026, 10, 22, 12, 30) - 5.5 * 3600e3);
+  assert.equal(bookingStartIST('22-11-2026', '3 PM'), null);
+  assert.equal(bookingStartIST('2026-11-22', '15:00'), null);
+  assert.equal(bookingStartIST('2026-11-22', ''), null);
 });
