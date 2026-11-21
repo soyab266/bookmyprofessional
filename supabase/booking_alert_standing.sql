@@ -5,25 +5,40 @@
 -- Apply only while the booking flag is OFF and no pilot is armed/idle-checked.
 begin;
 DO $$ begin
- if exists(select 1 from public.booking_alert_budget where total_cap<>0 or total_used<>0 or armed_at is not null or expires_at is not null)
+ -- total_used is deliberately NOT checked: it is an audit counter (2 from the
+ -- completed pilot) and must never block or be reset. Only an armed/active
+ -- pilot window or an in-flight claim blocks this migration.
+ if exists(select 1 from public.booking_alert_budget where total_cap<>0 or armed_at is not null or expires_at is not null)
   or exists(select 1 from public.booking_alert_outbox where status='sending') then
   raise exception 'standing_migration_requires_unarmed_idle_booking_pilot';
  end if;
 end $$;
 
+-- Activation watermark: mark every booking recorded before this migration as
+-- already expanded, so the standing expander starts from a clean slate. No
+-- historical, pilot or cancelled record can enter the standing backlog and
+-- receive a late confirmation. This is dispatch bookkeeping only; booking,
+-- payment and outbox audit rows are untouched.
+update public.bookings set booking_alert_expanded_at=now()
+ where booking_alert_expanded_at is null;
+
 -- Standing config: one row, service-role only. paused=true until the owner
--- activates; daily_cap bounds worst-case spend per UTC day; the dispatcher
--- flips paused=true itself on a Meta billing rejection (balance exhausted).
+-- activates; daily_cap bounds worst-case spend per IST day (resets at
+-- midnight Asia/Kolkata); the dispatcher flips paused=true itself on a Meta
+-- billing rejection (balance exhausted) and emails the owner.
+-- daily_cap 10 is the recommended STARTING cap for current low volume (5
+-- booking pairs/day, worst case about Rs 1.36/day at Rs 0.1357/message incl.
+-- IGST). Raising it is a one-line owner-approved UPDATE, never automatic.
 create table public.booking_alert_standing (
  id integer primary key check (id = 1),
  daily_cap integer not null check (daily_cap between 1 and 1000),
  used_today integer not null default 0 check (used_today >= 0),
- day date not null default current_date,
+ day date not null default ((now() at time zone 'Asia/Kolkata')::date),
  paused boolean not null default true,
  pause_reason text,
  updated_at timestamptz not null default now()
 );
-insert into public.booking_alert_standing(id, daily_cap) values (1, 50);
+insert into public.booking_alert_standing(id, daily_cap) values (1, 10);
 alter table public.booking_alert_standing enable row level security;
 revoke all on public.booking_alert_standing from public, anon, authenticated;
 grant all on public.booking_alert_standing to service_role;
@@ -71,17 +86,18 @@ begin
 end $$;
 
 -- Standing claim: one transaction claims one row and reserves one daily
--- allowance. Day rolls over lazily on first claim of a new UTC day. Paused
+-- allowance. Day rolls over lazily on first claim of a new IST day. Paused
 -- (owner or billing) denies everything. Stale in-flight claims still park as
 -- uncertain forever; no automatic retry.
 create or replace function public.claim_booking_alert() returns jsonb
 language plpgsql security invoker set search_path = public, pg_temp as $$
 declare standing public.booking_alert_standing%rowtype; q public.booking_alert_outbox%rowtype;
+ ist_day date := (now() at time zone 'Asia/Kolkata')::date;
 begin
  select * into standing from public.booking_alert_standing where id = 1 for update;
  if standing.paused then return null; end if;
- if standing.day < current_date then
-  update public.booking_alert_standing set day=current_date, used_today=0, updated_at=now() where id=1
+ if standing.day < ist_day then
+  update public.booking_alert_standing set day=ist_day, used_today=0, updated_at=now() where id=1
    returning * into standing;
  end if;
  if standing.used_today >= standing.daily_cap then return null; end if;
