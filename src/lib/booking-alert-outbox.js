@@ -36,6 +36,29 @@ export async function confirmVerifiedPaidBooking(supabase, bookingId, amount, pr
 
 const DEFAULT_LIMIT = 10;
 
+// A confirmation is only useful soon after payment. Standing rows that waited
+// longer than this (cap overflow, a pause, downtime, the activation gap)
+// expire unsent instead of arriving late. Matches the 2-hour freshness bound
+// in standing expand_booking_alert_receipts; the owner can tune both together.
+const MAX_NOTIFICATION_AGE_MS = 2 * 60 * 60 * 1000;
+
+// Parse the booking start instant from the stored date (YYYY-MM-DD) and slot
+// ("H:MM AM"/"H PM"), interpreted as Asia/Kolkata (UTC+5:30, no DST).
+// Returns epoch ms, or null when either part is not parseable.
+export function bookingStartIST(dateStr, timeSlot) {
+  const d = String(dateStr || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  const m = String(timeSlot || '').trim().match(/^(\d{1,2})(?::(\d{2}))?\s*([AP]M)$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const mins = m[2] ? parseInt(m[2], 10) : 0;
+  const ap = m[3].toUpperCase();
+  if (h < 1 || h > 12 || mins > 59) return null;
+  if (ap === 'PM' && h !== 12) h += 12;
+  if (ap === 'AM' && h === 12) h = 0;
+  return Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10), h, mins) - 5.5 * 3600e3;
+}
+
 // Meta Cloud API billing exhaustion: HTTP 402, or error code 131042 (business
 // payment/eligibility failure) in the API error body. Deliberately narrow:
 // ordinary template/recipient rejections must NOT pause the standing queue.
@@ -87,11 +110,29 @@ export async function dispatchBookingAlerts(supabase, deps = {}) {
   if (expanded.error || expanded.data?.errors > 0) return { ...summary, error: 'booking_expansion_failed' };
   const limit = Math.min(DEFAULT_LIMIT, Math.max(0, Number.isInteger(deps.limit) ? deps.limit : DEFAULT_LIMIT));
   const send = deps.send || sendMetaTemplateMessage;
-  for (let i = 0; i < limit; i++) {
+  // claim_booking_alert returns one booking GROUP (standing SQL: the
+  // customer/professional pair claims together or not at all) or a single row
+  // (legacy pilot SQL, still live until the standing migration is applied).
+  // Groups are processed interleaved: claim one group, send it, then claim.
+  for (let g = 0; g < limit; g++) {
     const claim = await supabase.rpc('claim_booking_alert');
     if (claim.error) return { ...summary, error: 'booking_claim_failed' };
-    const row = claim.data;
-    if (!row) break;
+    const data = claim.data;
+    const groupRows = Array.isArray(data?.rows) ? data.rows : (data ? [data] : []);
+    if (groupRows.length === 0) {
+      // Backlog visibility for monitoring: pending rows with no claim usually
+      // means the daily cap is reached (or the remainder is mid-claim).
+      // Best-effort: a failed count must never break the dispatch run.
+      try {
+        const pend = await supabase.from('booking_alert_outbox').select('id', { count: 'exact', head: true }).eq('status', 'pending');
+        summary.pending_remaining = pend && !pend.error && typeof pend.count === 'number' ? pend.count : null;
+      } catch {
+        summary.pending_remaining = null;
+      }
+      break;
+    }
+    for (let gi = 0; gi < groupRows.length; gi++) {
+      const row = { ...groupRows[gi], pilot_expires_at: groupRows[gi].pilot_expires_at ?? data?.pilot_expires_at ?? null };
     let status = 'uncertain';
     let messageId = null;
     let error = null;
@@ -107,18 +148,27 @@ export async function dispatchBookingAlerts(supabase, deps = {}) {
         summary.skipped++;
         continue;
       }
-      // Never send a stale confirmation: once the booking date has passed
-      // (IST), expire the row unsent and return the day's allowance. This is
-      // also how cap overflow resolves: rows left pending past midnight are
-      // skipped here on their later claim instead of arriving late, including
-      // the second half of a customer/professional pair split at the cap
-      // boundary.
-      const istToday = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
-      if (String(b.date).slice(0, 10) < istToday) {
-        const done = await supabase.rpc('finish_booking_alert', { p_id: row.id, p_claim_token: row.claim_token, p_status: 'skipped', p_message_id: null, p_error: 'booking_date_passed', p_release: true });
-        if (done.error || done.data !== true) return { ...summary, error: 'booking_finish_failed' };
-        summary.skipped++;
-        continue;
+      // Bounded notification age (standing rows only; pilot rows carry their
+      // own armed-window hard stop). A confirmation is useful only soon after
+      // payment and only before the appointment starts. Rows that waited past
+      // either bound expire here unsent, with the allowance returned - this is
+      // how cap overflow, pauses and the activation gap resolve. Distinct
+      // error codes keep a no-attempt expiry distinguishable from a provider
+      // attempt that failed or came back uncertain.
+      if (!row.pilot_expires_at) {
+        const paidAt = Date.parse(row.booking?.alert_created_at || row.created_at || '');
+        const startMs = bookingStartIST(b.date, b.time_slot);
+        const istToday = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        const expired = !Number.isFinite(paidAt) || Date.now() - paidAt > MAX_NOTIFICATION_AGE_MS ? 'expired_notification_age'
+          : startMs !== null && Date.now() >= startMs ? 'booking_started'
+          : startMs === null && String(b.date).slice(0, 10) < istToday ? 'booking_date_passed'
+          : null;
+        if (expired) {
+          const done = await supabase.rpc('finish_booking_alert', { p_id: row.id, p_claim_token: row.claim_token, p_status: 'skipped', p_message_id: null, p_error: expired, p_release: true });
+          if (done.error || done.data !== true) return { ...summary, error: 'booking_finish_failed' };
+          summary.skipped++;
+          continue;
+        }
       }
       const current = await supabase.from('profiles').select('id,full_name,phone,whatsapp_consent,notification_prefs').eq('id', row.user_id).maybeSingle();
       const p = current.data;
@@ -186,6 +236,14 @@ export async function dispatchBookingAlerts(supabase, deps = {}) {
             // reviewing the balance; never silently keep claiming.
             const done = await supabase.rpc('finish_booking_alert', { p_id: row.id, p_claim_token: row.claim_token, p_status: 'failed', p_message_id: null, p_error: 'meta_billing_failure', p_release: false });
             if (done.error || done.data !== true) return { ...summary, error: 'booking_finish_failed' };
+            // Every other claimed row in this booking group never reached
+            // Meta: finish it without an attempt and return its allowance.
+            // Without this it would park as uncertain and look like a send.
+            for (const sib of groupRows.slice(gi + 1)) {
+              const sd = await supabase.rpc('finish_booking_alert', { p_id: sib.id, p_claim_token: sib.claim_token, p_status: 'skipped', p_message_id: null, p_error: 'not_attempted_billing_pause', p_release: true });
+              if (sd.error || sd.data !== true) return { ...summary, error: 'booking_finish_failed' };
+              summary.skipped++;
+            }
             await pauseStandingBookings(supabase, 'meta_billing_failure');
             const notified = await (deps.notifyOwner || notifyOwnerBillingPause)(deps);
             summary.failed++;
@@ -212,6 +270,7 @@ export async function dispatchBookingAlerts(supabase, deps = {}) {
     });
     if (done.error || done.data !== true) return { ...summary, error: 'booking_finish_failed' };
     summary[status]++;
+    }
   }
   return summary;
 }
