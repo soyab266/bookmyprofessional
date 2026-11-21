@@ -1,0 +1,81 @@
+-- REVIEW ONLY. Booking-confirmation dispatch schedule: calls the already-
+-- deployed dispatcher route every 5 minutes through Supabase Cron
+-- (pg_cron + pg_net), exactly the pattern proven by
+-- registration_welcome_schedule.sql. Nothing here runs by itself; the
+-- cron.schedule call is commented out and needs the explicit owner
+-- activation approval, AFTER the standing migration is applied and the
+-- booking flag is ON.
+--
+-- CADENCE: one authenticated POST every 5 minutes = 288/day. An idle run
+-- costs one function invocation doing one paused/cap check; the standing
+-- row starts paused=true so a premature scheduler still sends nothing.
+--
+-- REVERSAL (full):
+--   select cron.unschedule('booking-alert-dispatch');
+--   -- optional: drop extension pg_net; drop extension pg_cron;
+-- Queued rows stay pending and unsent once unscheduled or paused.
+
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+
+-- Applied verbatim at activation time only (secret resolved from Supabase
+-- Vault at run time, never written here). No cap arithmetic in the job
+-- itself: claim_booking_alert enforces the standing daily cap and pause per
+-- claim, so this job is a plain authenticated trigger and nothing else.
+--
+-- select cron.schedule(
+--   'booking-alert-dispatch',
+--   '*/5 * * * *',
+--   $$
+--   select net.http_post(
+--     url := 'https://www.bookmyprofessional.com/api/notifications/booking-alerts',
+--     headers := (
+--       select jsonb_build_object(
+--         'Content-Type', 'application/json',
+--         'X-Internal-Secret', decrypted_secret
+--       )
+--       from vault.decrypted_secrets
+--       where name = 'bmp_internal_secret'
+--     ),
+--     body := '{}'::jsonb,
+--     timeout_milliseconds := 30000
+--   ) as request_id;
+--   $$
+-- );
+
+-- ACTIVATION CHECKLIST - exact staged order. EVERY stage waits on the
+-- explicit owner activation approval (none done now); stages 1-4 are
+-- inert-by-design (zero sends possible), stage 6 is the live moment.
+--   1. MERGE + DEPLOY: merge the standing-mode PR and let Vercel deploy.
+--      Flag stays OFF; route still answers disabled:true.
+--   2. MIGRATE, PAUSED: apply booking_alert_standing.sql. Verify the
+--      standing row is paused=true, daily_cap as approved, and that
+--      claim_booking_alert returns null (paused).
+--   3. SCHEDULER ON, STILL PAUSED: apply this file's two create-extension
+--      statements and the cron.schedule call. Verify 2-3 runs:
+--        select jobname, schedule, active from cron.job;
+--        select status, error_msg, status_code
+--          from net._http_response order by created desc limit 5;
+--      Runs must show HTTP 200 with zero sends (claim denies - paused).
+--   4. FLAG ON: set META_WHATSAPP_BOOKINGS_ENABLED=true and redeploy.
+--      Verify an authed probe returns 200 without disabled:true and zero
+--      sends (still paused). Leave BOOKING_ALERT_OWNER_EMAIL unset. Optional email delivery
+--      needs a separate exact sender/recipient/content approval. Arrange
+--      agreed operational monitoring before unpause; it has check latency
+--      and is not an instant or guaranteed delivery channel.
+--   5. DRY EXPANSION CHECK: with a paid verified booking present, call the
+--      dispatcher once manually and verify expand created the expected
+--      outbox rows in 'pending' with pilot_armed_at NULL, then unpause is
+--      the ONLY remaining step. (Skip when no test booking is desired:
+--      expansion then simply finds nothing.)
+--   6. GO LIVE (the live moment, under the same explicit approval):
+--        update public.booking_alert_standing set paused=false,
+--          pause_reason=null, updated_at=now() where id=1;
+--      First real sends happen on the next 5-minute tick. Verify the
+--      first cycle's outbox rows and budget counters.
+--   7. STEADY STATE: billing rejection pauses automatically
+--      (paused=true, pause_reason='meta_billing_failure'); optional email
+--      is best-effort only when separately configured; owner reviews
+--      the Meta balance and manually unpauses. Daily cap change:
+--        -- Each role cap is 15, aggregate 30. Any cap change needs approval.
+--      Full stop: cron.unschedule + paused=true + flag false + redeploy.
