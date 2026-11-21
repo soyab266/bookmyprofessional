@@ -26,9 +26,13 @@ update public.bookings set booking_alert_expanded_at=now()
 -- activates; daily_cap bounds worst-case spend per IST day (resets at
 -- midnight Asia/Kolkata); the dispatcher flips paused=true itself on a Meta
 -- billing rejection (balance exhausted) and emails the owner.
--- daily_cap 10 is the recommended STARTING cap for current low volume (5
--- booking pairs/day, worst case about Rs 1.36/day at Rs 0.1357/message incl.
--- IGST). Raising it is a one-line owner-approved UPDATE, never automatic.
+-- daily_cap 30 is the owner-confirmed STARTING cap (owner, 21 Nov 2026:
+-- 15 customer + 15 professional messages per day = 15 booking pairs/day,
+-- worst case about Rs 4.08/day at Rs 0.1357/message incl. IGST). It is one
+-- shared counter: a booking uses 2 slots when both sides are reachable and
+-- 1 when only one side is, so an uneven-consent day is not guaranteed to
+-- split exactly 15/15. Raising it is a one-line owner-approved UPDATE,
+-- never automatic.
 create table public.booking_alert_standing (
  id integer primary key check (id = 1),
  daily_cap integer not null check (daily_cap between 1 and 1000),
@@ -38,7 +42,7 @@ create table public.booking_alert_standing (
  pause_reason text,
  updated_at timestamptz not null default now()
 );
-insert into public.booking_alert_standing(id, daily_cap) values (1, 10);
+insert into public.booking_alert_standing(id, daily_cap) values (1, 30);
 alter table public.booking_alert_standing enable row level security;
 revoke all on public.booking_alert_standing from public, anon, authenticated;
 grant all on public.booking_alert_standing to service_role;
