@@ -47,9 +47,14 @@ create policy booking_alert_standing_service on public.booking_alert_standing fo
 -- Standing rows carry no pilot window marker.
 alter table public.booking_alert_outbox alter column pilot_armed_at drop not null;
 
--- Standing expansion: every verified paid upcoming booking with a v2 receipt,
+-- Standing expansion: verified paid upcoming bookings with a v2 receipt,
 -- consent-gated at expand time (and again at dispatch time in JS). No scope
 -- row, no armed window. Idempotent via the outbox unique key.
+-- Freshness bound: bookings verified more than 2 hours ago are marked
+-- expanded WITHOUT queueing - a confirmation that old is noise, not service.
+-- Together with the activation watermark above this intentionally covers the
+-- migration-to-unpause gap: bookings paid in that window either queue while
+-- fresh or expire via the dispatcher age guard; there is no historical replay.
 create or replace function public.expand_booking_alert_receipts(p_limit integer default 25) returns jsonb
 language plpgsql security invoker set search_path=public,pg_temp as $$
 declare b public.bookings%rowtype;
@@ -58,11 +63,13 @@ begin
  for b in select * from public.bookings where booking_alert_verified_at is not null
    and booking_alert_expanded_at is null
    and booking_alert_receipt->>'template_version'='2'
+   and booking_alert_verified_at >= now() - interval '2 hours'
    order by booking_alert_verified_at,id for update skip locked limit least(greatest(p_limit,0),100)
  loop
   begin
    if b.payment_status='paid' and b.status='upcoming'
-    and (b.booking_alert_receipt->>'alert_created_at') is not null then
+    and (b.booking_alert_receipt->>'alert_created_at') is not null
+    and (b.booking_alert_receipt->>'alert_created_at')::timestamptz >= now() - interval '2 hours' then
     for party in select b.booking_alert_receipt->>'customer_id' as uid,'customer' as role,'bmp_booking_details_v2' as template
      union all select b.booking_alert_receipt->>'professional_id','professional','bmp_professional_booking_details_v2'
     loop
@@ -85,13 +92,20 @@ begin
  return jsonb_build_object('expanded',expanded,'errors',errors);
 end $$;
 
--- Standing claim: one transaction claims one row and reserves one daily
--- allowance. Day rolls over lazily on first claim of a new IST day. Paused
--- (owner or billing) denies everything. Stale in-flight claims still park as
--- uncertain forever; no automatic retry.
+-- Standing claim: one transaction claims ONE BOOKING GROUP (usually the
+-- customer+professional pair) and reserves that many daily allowances.
+-- All-or-nothing: when the whole group does not fit the remaining allowance,
+-- nothing claims, so a pair never splits across the daily cap. Rows left
+-- pending are expired unsent by the dispatcher's age guard (never sent late).
+-- Claims are fully serialized by the standing row lock; the advisory lock is
+-- belt-and-braces. Day rolls over lazily on first claim of a new IST day.
+-- Paused (owner or billing) denies everything. Stale in-flight claims still
+-- park as uncertain forever; no automatic retry. Standing rows only: legacy
+-- pilot rows (pilot_armed_at not null) are never claimed here.
 create or replace function public.claim_booking_alert() returns jsonb
 language plpgsql security invoker set search_path = public, pg_temp as $$
 declare standing public.booking_alert_standing%rowtype; q public.booking_alert_outbox%rowtype;
+ gsize integer; rows_json jsonb;
  ist_day date := (now() at time zone 'Asia/Kolkata')::date;
 begin
  select * into standing from public.booking_alert_standing where id = 1 for update;
@@ -100,18 +114,23 @@ begin
   update public.booking_alert_standing set day=ist_day, used_today=0, updated_at=now() where id=1
    returning * into standing;
  end if;
- if standing.used_today >= standing.daily_cap then return null; end if;
  -- A crashed worker might have sent. Hold it forever for review, do not retry.
  update public.booking_alert_outbox set status='uncertain',last_error='stale_claim_uncertain',updated_at=now()
   where status='sending' and updated_at < now()-interval '10 minutes';
  select * into q from public.booking_alert_outbox
-  where status='pending'
+  where status='pending' and pilot_armed_at is null
     order by created_at,id for update skip locked limit 1;
  if not found then return null; end if;
- update public.booking_alert_standing set used_today=used_today+1, updated_at=now() where id=1;
- update public.booking_alert_outbox set status='sending',claim_token=gen_random_uuid(),attempts=attempts+1,updated_at=now()
-  where id=q.id returning * into q;
- return to_jsonb(q) || jsonb_build_object('pilot_expires_at',null);
+ if not pg_try_advisory_xact_lock(hashtext(q.booking_id::text)) then return null; end if;
+ select count(*) into gsize from public.booking_alert_outbox
+  where status='pending' and booking_id=q.booking_id;
+ if standing.used_today + gsize > standing.daily_cap then return null; end if;
+ update public.booking_alert_standing set used_today=used_today+gsize, updated_at=now() where id=1;
+ with upd as (
+  update public.booking_alert_outbox set status='sending',claim_token=gen_random_uuid(),attempts=attempts+1,updated_at=now()
+   where booking_id=q.booking_id and status='pending' returning *
+ ) select jsonb_agg(to_jsonb(upd) order by upd.created_at,upd.id) into rows_json from upd;
+ return jsonb_build_object('rows', coalesce(rows_json,'[]'::jsonb), 'pilot_expires_at', null);
 end $$;
 
 -- Finish: release returns the day's allowance only where JS proved no Meta
