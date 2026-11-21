@@ -176,3 +176,49 @@ test('bookingStartIST parses slots and rejects junk', () => {
   assert.equal(bookingStartIST('2026-11-22', '15:00'), null);
   assert.equal(bookingStartIST('2026-11-22', ''), null);
 });
+
+// Optional local PostgreSQL-engine SQL check; never connects to production.
+// Install @electric-sql/pglite separately and point BMP_PGLITE_MODULE to its
+// dist/index.js. This is not an independent-session concurrency stress test.
+test('SQL integration: exact role caps and reservation accounting', { skip: !process.env.BMP_PGLITE_MODULE }, async () => {
+  const { pathToFileURL, fileURLToPath } = await import('node:url');
+  const path = await import('node:path');
+  const fs = await import('node:fs');
+  const { PGlite } = await import(pathToFileURL(process.env.BMP_PGLITE_MODULE).href);
+  const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const db=new PGlite();
+await db.exec(`create role anon;create role authenticated;create role service_role;
+create table public.profiles(id uuid,whatsapp_consent boolean,phone text,notification_prefs jsonb);
+create table public.bookings(id text primary key,booking_alert_verified_at timestamptz,booking_alert_expanded_at timestamptz,booking_alert_receipt jsonb,payment_status text,status text,booking_alert_expand_error text);
+create table public.booking_alert_budget(id int,total_cap int,total_used int,armed_at timestamptz,expires_at timestamptz);
+insert into booking_alert_budget values(1,0,2,null,null);
+create table public.booking_alert_outbox(id uuid primary key default gen_random_uuid(),booking_id text,user_id uuid,recipient_role text,event text default 'booking_paid',template text,booking jsonb,recipient_phone text,pilot_armed_at timestamptz not null,status text default 'pending',claim_token uuid,attempts int default 0,meta_message_id text,last_error text,created_at timestamptz default now(),updated_at timestamptz default now(),unique(booking_id,user_id,event));`);
+await db.exec(fs.readFileSync(path.join(ROOT,'supabase/booking_alert_standing.sql'),'utf8'));
+const q=async(s)=>(await db.query(s)).rows;
+function check(b,label){if(!b)throw Error(label);console.log('PASS',label)}
+const claim=async()=> (await q('select claim_booking_alert() as v'))[0].v;
+async function add(id,roles,age='1 minute'){await db.query(`insert into bookings(id,booking_alert_verified_at) values($1,now()-$2::interval)`,[id,age]);for(const role of roles)await db.query(`insert into booking_alert_outbox(booking_id,user_id,recipient_role,booking,pilot_armed_at) values($1,gen_random_uuid(),$2,'{}',null)`,[id,role]);}
+check(await claim()===null,'paused migration denies claims');
+await db.exec('update booking_alert_standing set paused=false');
+for(let i=0;i<16;i++)await add('C'+i,['customer']);
+for(let i=0;i<15;i++){let r=await claim();check(r?.rows.length===1,'customer reservation '+i)}
+check(await claim()===null,'16th customer blocked despite spare aggregate slots');
+await add('P',['professional']);let p=await claim();check(p?.rows[0].recipient_role==='professional','professional-only passes blocked customer head');
+let stats=(await q('select * from booking_alert_standing'))[0];check(stats.customer_used===15&&stats.professional_used===1&&stats.used_today===16,'separate counters exact');
+await db.query('select finish_booking_alert($1,$2,$3,null,null,true)',[p.rows[0].id,p.rows[0].claim_token,'skipped']);
+stats=(await q('select * from booking_alert_standing'))[0];check(stats.customer_used===15&&stats.professional_used===0&&stats.used_today===15,'no-attempt releases professional only');
+await add('PAIR',['customer','professional']);check(await claim()===null,'pair cannot partially claim when customer side exhausted');
+await db.exec('update booking_alert_standing set day=day-1');let next=await claim();check(next?.rows.length===1,'new IST day replenishes both counters');
+stats=(await q('select * from booking_alert_standing'))[0];check(stats.customer_used===1&&stats.professional_used===0,'rollover resets role counters');
+let pair=await claim();check(pair?.rows.length===2,'whole pair takes one slot per role');
+await db.query('select finish_booking_alert($1,$2,$3,null,null,false)',[pair.rows[0].id,pair.rows[0].claim_token,'uncertain']);
+stats=(await q('select * from booking_alert_standing'))[0];check(stats.customer_used===2&&stats.professional_used===1,'uncertain attempt keeps reservation');
+await db.exec('update booking_alert_standing set day=day+1,used_today=10,customer_used=5,professional_used=5');
+await db.query('select finish_booking_alert($1,$2,$3,null,null,true)',[pair.rows[1].id,pair.rows[1].claim_token,'failed']);
+stats=(await q('select * from booking_alert_standing'))[0];check(stats.used_today===10&&stats.customer_used===5&&stats.professional_used===5,'late previous-day release cannot reduce new-day usage');
+await add('STALE',['customer','professional'],'3 hours');await db.exec('update booking_alert_standing set customer_used=15,professional_used=15,used_today=30');await claim();
+check((await q("select count(*)::int as n from booking_alert_outbox where booking_id='STALE' and status='skipped' and last_error='expired_notification_age'"))[0].n===2,'stale cap overflow expires without reservation');
+await db.exec('delete from booking_alert_standing');check(await claim()===null,'missing config fails closed');
+await db.close();
+
+});
