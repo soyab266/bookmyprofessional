@@ -59,10 +59,10 @@ create extension if not exists pg_net;
 --      Runs must show HTTP 200 with zero sends (claim denies - paused).
 --   4. FLAG ON: set META_WHATSAPP_BOOKINGS_ENABLED=true and redeploy.
 --      Verify an authed probe returns 200 without disabled:true and zero
---      sends (still paused). Also set BOOKING_ALERT_OWNER_EMAIL to the
---      owner inbox (Brevo sender already configured) so a billing pause
---      emails the owner; without it the pause still happens but the notice
---      is not delivered.
+--      sends (still paused). Leave BOOKING_ALERT_OWNER_EMAIL unset. Optional email delivery
+--      needs a separate exact sender/recipient/content approval. Arrange
+--      agreed operational monitoring before unpause; it has check latency
+--      and is not an instant or guaranteed delivery channel.
 --   5. DRY EXPANSION CHECK: with a paid verified booking present, call the
 --      dispatcher once manually and verify expand created the expected
 --      outbox rows in 'pending' with pilot_armed_at NULL, then unpause is
@@ -74,8 +74,8 @@ create extension if not exists pg_net;
 --      First real sends happen on the next 5-minute tick. Verify the
 --      first cycle's outbox rows and budget counters.
 --   7. STEADY STATE: billing rejection pauses automatically
---      (paused=true, pause_reason='meta_billing_failure') and sends one
---      owner email when BOOKING_ALERT_OWNER_EMAIL is set; owner reviews
+--      (paused=true, pause_reason='meta_billing_failure'); optional email
+--      is best-effort only when separately configured; owner reviews
 --      the Meta balance and manually unpauses. Daily cap change:
---        update public.booking_alert_standing set daily_cap=N where id=1;
+--        -- Each role cap is 15, aggregate 30. Any cap change needs approval.
 --      Full stop: cron.unschedule + paused=true + flag false + redeploy.
