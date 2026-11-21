@@ -1,7 +1,7 @@
 import { readProfessionalBookability } from './professional-booking-eligibility.js';
 // Server-only. Review draft, no live job or activation is installed.
 import { hasWhatsAppConsent } from './whatsapp.js';
-import { buildCustomerBookingReceived, buildProfessionalBookingRequest, normaliseMetaRecipient } from './meta-whatsapp-templates.js';
+import { buildCustomerBookingDetails, buildProfessionalBookingDetails, META_TEMPLATE, normaliseMetaRecipient } from './meta-whatsapp-templates.js';
 import { validateTemplateMessage } from './meta-whatsapp-validate.js';
 import { sendMetaTemplateMessage } from './meta-whatsapp.js';
 
@@ -54,10 +54,10 @@ export async function dispatchBookingAlerts(supabase, deps = {}) {
     let release = false;
     try {
       // Do not send a delayed confirmation for a cancelled/refunded/rescheduled booking.
-      const liveBooking = await supabase.from('bookings').select('id,payment_status,status,date,time_slot,service_title,customer_id,professional_id').eq('id', row.booking_id).maybeSingle();
+      const liveBooking = await supabase.from('bookings').select('id,payment_status,status,date,time_slot,service_title,customer_id,professional_id,address,total_paid').eq('id', row.booking_id).maybeSingle();
       if (liveBooking.error) throw new Error('booking_check_failed');
       const b = liveBooking.data;
-      if (!b || b.payment_status !== 'paid' || b.status !== 'upcoming' || String(b.date) !== String(row.booking.date) || b.time_slot !== row.booking.time_slot || b.service_title !== row.booking.service_title || String(b.customer_id) !== String(row.booking.customer_id) || String(b.professional_id) !== String(row.booking.professional_id) || !await readProfessionalBookability(supabase, b.professional_id)) {
+      if (!b || row.booking.template_version !== 2 || b.payment_status !== 'paid' || b.status !== 'upcoming' || String(b.date) !== String(row.booking.date) || b.time_slot !== row.booking.time_slot || b.service_title !== row.booking.service_title || String(b.customer_id) !== String(row.booking.customer_id) || String(b.professional_id) !== String(row.booking.professional_id) || b.address !== row.booking.address || b.total_paid == null || row.booking.total_paid == null || Number(b.total_paid) !== Number(row.booking.total_paid) || !await readProfessionalBookability(supabase, b.professional_id)) {
         const done = await supabase.rpc('finish_booking_alert', { p_id: row.id, p_claim_token: row.claim_token, p_status: 'skipped', p_message_id: null, p_error: 'booking_changed_or_unavailable', p_release: true });
         if (done.error || done.data !== true) return { ...summary, error: 'booking_finish_failed' };
         summary.skipped++;
@@ -72,9 +72,18 @@ export async function dispatchBookingAlerts(supabase, deps = {}) {
       } else if (normaliseMetaRecipient(p.phone) !== normaliseMetaRecipient(row.recipient_phone)) {
         status = 'skipped'; error = 'recipient_changed'; release = true;
       } else {
+        // Fetch customer contact only for the professional, never persist it in
+        // either outbox snapshot or the customer's WhatsApp payload.
+        let customer = null;
+        if (row.recipient_role === 'professional') {
+          const contact = await supabase.from('profiles').select('id,full_name,phone')
+            .eq('id', b.customer_id).maybeSingle();
+          if (contact.error) throw new Error('customer_contact_check_failed');
+          customer = contact.data;
+        }
         const builders = {
-          customer: ['bmp_booking_received', () => buildCustomerBookingReceived({ to: p.phone, customerName: p.full_name, booking: row.booking })],
-          professional: ['bmp_professional_booking_request', () => buildProfessionalBookingRequest({ to: p.phone, professionalName: p.full_name, booking: row.booking })],
+          customer: [META_TEMPLATE.BOOKING_DETAILS, () => buildCustomerBookingDetails({ to: p.phone, customerName: p.full_name, booking: row.booking })],
+          professional: [META_TEMPLATE.PRO_BOOKING_DETAILS, () => buildProfessionalBookingDetails({ to: p.phone, professionalName: p.full_name, customer, booking: row.booking })],
         };
         const builder = builders[row.recipient_role];
         const payload = builder && builder[0] === row.template ? builder[1]() : null;
