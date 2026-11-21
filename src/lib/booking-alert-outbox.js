@@ -90,6 +90,20 @@ export async function dispatchBookingAlerts(supabase, deps = {}) {
             summary.skipped++;
             continue;
           }
+          // A global request cap cannot isolate a named booking or recipient.
+          // Recheck the approved scope after the live booking/profile checks.
+          // An unavailable/newer schema fails closed before any network request.
+          const scope = await supabase.rpc('booking_alert_scope_allows', {
+            p_armed_at: row.pilot_armed_at, p_booking_id: row.booking_id,
+            p_user_id: row.user_id, p_role: row.recipient_role,
+            p_phone: normaliseMetaRecipient(p.phone),
+          });
+          if (scope.error || scope.data !== true) {
+            const done = await supabase.rpc('finish_booking_alert', { p_id: row.id, p_claim_token: row.claim_token, p_status: 'skipped', p_message_id: null, p_error: scope.error ? 'scope_check_failed' : 'outside_approved_scope', p_release: true });
+            if (done.error || done.data !== true) return { ...summary, error: 'booking_finish_failed' };
+            summary.skipped++;
+            continue;
+          }
           // From here a throw is ambiguous and must consume the reservation.
           const result = await send(validation.sanitised, deps);
           if (result?.simulated) {
