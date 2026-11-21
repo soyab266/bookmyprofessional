@@ -25,18 +25,20 @@ update public.bookings set booking_alert_expanded_at=now()
 -- Standing config: one row, service-role only. paused=true until the owner
 -- activates; daily_cap bounds worst-case spend per IST day (resets at
 -- midnight Asia/Kolkata); the dispatcher flips paused=true itself on a Meta
--- billing rejection (balance exhausted) and emails the owner.
--- daily_cap 30 is the owner-confirmed STARTING cap (owner, 21 Nov 2026:
--- 15 customer + 15 professional messages per day = 15 booking pairs/day,
--- worst case about Rs 4.08/day at Rs 0.1357/message incl. IGST). It is one
--- shared counter: a booking uses 2 slots when both sides are reachable and
--- 1 when only one side is, so an uneven-consent day is not guaranteed to
--- split exactly 15/15. Raising it is a one-line owner-approved UPDATE,
--- never automatic.
+-- billing rejection; owner email is optional and unset by default.
+-- Owner-selected limit: 15 customer attempts and 15 professional attempts
+-- per IST day. Separate counters enforce each side even if consent is uneven.
+-- The aggregate ceiling stays 30 (about Rs 4.08/day at the verified rate).
+-- Provider rejections and uncertain outcomes consume slots. Proven no-attempt
+-- outcomes release only that role's reservation in the same IST budget day.
 create table public.booking_alert_standing (
  id integer primary key check (id = 1),
  daily_cap integer not null check (daily_cap between 1 and 1000),
  used_today integer not null default 0 check (used_today >= 0),
+ customer_cap integer not null default 15 check(customer_cap between 0 and 15),
+ professional_cap integer not null default 15 check(professional_cap between 0 and 15),
+ customer_used integer not null default 0 check(customer_used>=0),
+ professional_used integer not null default 0 check(professional_used>=0),
  day date not null default ((now() at time zone 'Asia/Kolkata')::date),
  paused boolean not null default true,
  pause_reason text,
@@ -50,6 +52,7 @@ create policy booking_alert_standing_service on public.booking_alert_standing fo
 
 -- Standing rows carry no pilot window marker.
 alter table public.booking_alert_outbox alter column pilot_armed_at drop not null;
+alter table public.booking_alert_outbox add column standing_reserved_day date;
 
 -- Standing expansion: verified paid upcoming bookings with a v2 receipt,
 -- consent-gated at expand time (and again at dispatch time in JS). No scope
@@ -109,30 +112,44 @@ end $$;
 create or replace function public.claim_booking_alert() returns jsonb
 language plpgsql security invoker set search_path = public, pg_temp as $$
 declare standing public.booking_alert_standing%rowtype; q public.booking_alert_outbox%rowtype;
- gsize integer; rows_json jsonb;
+ gsize integer; csize integer; psize integer; fits boolean:=false; rows_json jsonb;
  ist_day date := (now() at time zone 'Asia/Kolkata')::date;
 begin
  select * into standing from public.booking_alert_standing where id = 1 for update;
- if standing.paused then return null; end if;
+ if not found or standing.paused then return null; end if;
  if standing.day < ist_day then
-  update public.booking_alert_standing set day=ist_day, used_today=0, updated_at=now() where id=1
+  update public.booking_alert_standing set day=ist_day, used_today=0, customer_used=0, professional_used=0, updated_at=now() where id=1
    returning * into standing;
  end if;
  -- A crashed worker might have sent. Hold it forever for review, do not retry.
  update public.booking_alert_outbox set status='uncertain',last_error='stale_claim_uncertain',updated_at=now()
   where status='sending' and updated_at < now()-interval '10 minutes';
- select * into q from public.booking_alert_outbox
+ -- Expire aged pending rows even when no budget remains. These never claimed
+ -- a reservation and made no provider request, so no counter is released.
+ update public.booking_alert_outbox o set status='skipped',last_error='expired_notification_age',updated_at=now()
+  from public.bookings b where o.booking_id=b.id and o.status='pending'
+   and o.pilot_armed_at is null and b.booking_alert_verified_at < now()-interval '2 hours';
+ -- A blocked customer pair must not block a later professional-only booking.
+ -- Scan FIFO for the first WHOLE group that fits both role limits.
+ for q in select * from public.booking_alert_outbox
   where status='pending' and pilot_armed_at is null
-    order by created_at,id for update skip locked limit 1;
- if not found then return null; end if;
- if not pg_try_advisory_xact_lock(hashtext(q.booking_id::text)) then return null; end if;
- select count(*) into gsize from public.booking_alert_outbox
-  where status='pending' and booking_id=q.booking_id;
- if standing.used_today + gsize > standing.daily_cap then return null; end if;
- update public.booking_alert_standing set used_today=used_today+gsize, updated_at=now() where id=1;
+  order by created_at,id for update skip locked
+ loop
+  select count(*),count(*) filter(where recipient_role='customer'),count(*) filter(where recipient_role='professional')
+   into gsize,csize,psize from public.booking_alert_outbox
+   where status='pending' and pilot_armed_at is null and booking_id=q.booking_id;
+  if gsize=csize+psize and standing.used_today+gsize<=standing.daily_cap
+   and standing.customer_used+csize<=standing.customer_cap
+   and standing.professional_used+psize<=standing.professional_cap then
+   if pg_try_advisory_xact_lock(hashtext(q.booking_id::text)) then fits:=true; exit; end if;
+  end if;
+ end loop;
+ if not fits then return null; end if;
+ update public.booking_alert_standing set used_today=used_today+gsize,
+  customer_used=customer_used+csize,professional_used=professional_used+psize,updated_at=now() where id=1;
  with upd as (
-  update public.booking_alert_outbox set status='sending',claim_token=gen_random_uuid(),attempts=attempts+1,updated_at=now()
-   where booking_id=q.booking_id and status='pending' returning *
+  update public.booking_alert_outbox set status='sending',claim_token=gen_random_uuid(),attempts=attempts+1,updated_at=now(),standing_reserved_day=ist_day
+   where booking_id=q.booking_id and status='pending' and pilot_armed_at is null returning *
  ) select jsonb_agg(to_jsonb(upd) order by upd.created_at,upd.id) into rows_json from upd;
  return jsonb_build_object('rows', coalesce(rows_json,'[]'::jsonb), 'pilot_expires_at', null);
 end $$;
@@ -156,7 +173,10 @@ begin
   if q.pilot_armed_at is not null and q.pilot_armed_at=budget.armed_at then
    update public.booking_alert_budget set total_used=greatest(0,total_used-1) where id=1;
   elsif q.pilot_armed_at is null then
-   update public.booking_alert_standing set used_today=greatest(0,used_today-1), updated_at=now() where id=1;
+   update public.booking_alert_standing set used_today=greatest(0,used_today-1),
+    customer_used=greatest(0,customer_used-case when q.recipient_role='customer' then 1 else 0 end),
+    professional_used=greatest(0,professional_used-case when q.recipient_role='professional' then 1 else 0 end),
+    updated_at=now() where id=1 and day=q.standing_reserved_day;
   end if;
  end if;
  return true;
