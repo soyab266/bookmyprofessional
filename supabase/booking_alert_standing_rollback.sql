@@ -2,9 +2,20 @@
 -- pilot-gated expand/claim/finish functions byte-faithfully (PR46/PR47
 -- versions), drops the standing config, re-imposes pilot_armed_at NOT NULL.
 -- Refuses to run while any standing (pilot_armed_at IS NULL) outbox row
--- exists or the standing row was ever unpaused: those states mean real
--- standing sends may exist and rollback would strand them. Clear or finish
--- such rows deliberately first, under its own approval.
+-- exists or the standing row is currently unpaused: re-imposing NOT NULL
+-- would fail on standing rows anyway, and silently dropping the standing
+-- table could strand queued sends.
+--
+-- Practical recovery paths:
+--  A. Pre-live (no standing sends ever made): pause is still true and no
+--     standing outbox rows exist, so this file runs cleanly and restores the
+--     exact PR46/PR47 pilot state.
+--  B. Post-live (real standing sends exist): the standing outbox rows are
+--     audit and are never deleted, so this file will keep refusing. The
+--     supported stop is instead: cron.unschedule, standing paused=true, app
+--     flag false + redeploy. That is a full, durable stop that preserves all
+--     audit rows; the nullable pilot_armed_at column is inert for the pilot
+--     functions, which only match pilot_armed_at=budget.armed_at rows.
 -- Operator must keep the app booking flag OFF and the booking job unscheduled
 -- during rollback.
 begin;
