@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dispatchBookingAlerts, isMetaBillingFailure, pauseStandingBookings } from '../src/lib/booking-alert-outbox.js';
+import { dispatchBookingAlerts, isMetaBillingFailure, notifyOwnerBillingPause, pauseStandingBookings } from '../src/lib/booking-alert-outbox.js';
 
 const profile = { id: 'u', full_name: 'Example', phone: '9000000001', whatsapp_consent: true };
 // Standing row: pilot_expires_at null, no pilot scope, template v2 snapshot.
@@ -92,4 +92,38 @@ test('non-billing rejection stays uncertain and never pauses', async () => {
 test('pause write is best-effort and never throws', async () => {
   const bad = { from() { return { update() { return this }, eq() { throw new Error('db down') } } } };
   await pauseStandingBookings(bad, 'meta_billing_failure');
+});
+
+test('stale row from a past booking date expires unsent and releases the allowance', async () => {
+  const stale = { ...standingRow, booking: { ...standingRow.booking, date: '2000-01-01' } };
+  const r = await run({ rows: [stale], booking: { ...stale.booking, payment_status: 'paid', status: 'upcoming' } });
+  assert.equal(r.sends, 0);
+  assert.equal(r.finish.p_status, 'skipped');
+  assert.equal(r.finish.p_error, 'booking_date_passed');
+  assert.equal(r.finish.p_release, true);
+  assert.equal(r.summary.skipped, 1);
+});
+
+test('billing rejection emails the owner once via the injected notifier', async () => {
+  process.env.META_WHATSAPP_BOOKINGS_ENABLED = 'true';
+  const sb = db({ rows: [standingRow, { ...standingRow, id: 'q2' }] });
+  let notices = 0;
+  const summary = await dispatchBookingAlerts(sb, {
+    send: async () => ({ success: false, status: 402 }),
+    notifyOwner: async () => { notices++; return true; },
+  });
+  delete process.env.META_WHATSAPP_BOOKINGS_ENABLED;
+  assert.equal(summary.paused, 'meta_billing_failure');
+  assert.equal(summary.owner_notified, true);
+  assert.equal(notices, 1);
+});
+
+test('owner notice is skipped without an address and never throws on failure', async () => {
+  assert.equal(await notifyOwnerBillingPause({ env: {} }), false);
+  let called = 0;
+  const ok = await notifyOwnerBillingPause({ env: { BOOKING_ALERT_OWNER_EMAIL: 'owner@example.com' }, sendEmail: async () => { called++; } });
+  assert.equal(ok, true);
+  assert.equal(called, 1);
+  const failed = await notifyOwnerBillingPause({ env: { BOOKING_ALERT_OWNER_EMAIL: 'owner@example.com' }, sendEmail: async () => { throw new Error('brevo down'); } });
+  assert.equal(failed, false);
 });
