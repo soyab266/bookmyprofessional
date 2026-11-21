@@ -4,6 +4,7 @@ import { hasWhatsAppConsent } from './whatsapp.js';
 import { buildCustomerBookingDetails, buildProfessionalBookingDetails, META_TEMPLATE, normaliseMetaRecipient } from './meta-whatsapp-templates.js';
 import { validateTemplateMessage } from './meta-whatsapp-validate.js';
 import { sendMetaTemplateMessage } from './meta-whatsapp.js';
+import { sendEmailViaBrevo } from './brevo.js';
 
 export function bookingAlertsEnabled(env = process.env) {
   return env.META_WHATSAPP_BOOKINGS_ENABLED === 'true';
@@ -54,6 +55,29 @@ export async function pauseStandingBookings(supabase, reason) {
   }
 }
 
+// Best-effort owner notice after a billing pause. Delivery is one Brevo email
+// and only when BOOKING_ALERT_OWNER_EMAIL is configured; the pause never
+// depends on it and a failed notice is logged, never thrown. Natural dedupe:
+// once paused, claim denies everything, so no further email goes out until an
+// owner manually unpauses and another billing rejection occurs.
+export async function notifyOwnerBillingPause(deps = {}) {
+  try {
+    const to = (deps.env || process.env).BOOKING_ALERT_OWNER_EMAIL;
+    if (!to) return false;
+    const sendMail = deps.sendEmail || sendEmailViaBrevo;
+    await sendMail({
+      toEmail: to,
+      toName: 'BookMyProfessional owner',
+      subject: 'Booking WhatsApp confirmations paused: Meta billing failure',
+      htmlContent: '<p>Automatic booking confirmations were paused because Meta rejected a send for billing (prepaid balance exhausted or the WABA is blocked).</p><p>No further booking messages will be sent. After reviewing the Meta balance, re-enable manually: booking_alert_standing paused=false, pause_reason=null.</p>',
+    });
+    return true;
+  } catch (err) {
+    console.error('[BookingAlerts] owner billing notice failed:', err?.message || err);
+    return false;
+  }
+}
+
 // Claim + reserve are one service-only SQL transaction. A claim is never reset
 // to pending. Acceptance/finalization failure stays held; no automatic resend.
 export async function dispatchBookingAlerts(supabase, deps = {}) {
@@ -79,6 +103,19 @@ export async function dispatchBookingAlerts(supabase, deps = {}) {
       const b = liveBooking.data;
       if (!b || row.booking.template_version !== 2 || b.payment_status !== 'paid' || b.status !== 'upcoming' || String(b.date) !== String(row.booking.date) || b.time_slot !== row.booking.time_slot || b.service_title !== row.booking.service_title || String(b.customer_id) !== String(row.booking.customer_id) || String(b.professional_id) !== String(row.booking.professional_id) || b.address !== row.booking.address || b.total_paid == null || row.booking.total_paid == null || Number(b.total_paid) !== Number(row.booking.total_paid) || !await readProfessionalBookability(supabase, b.professional_id)) {
         const done = await supabase.rpc('finish_booking_alert', { p_id: row.id, p_claim_token: row.claim_token, p_status: 'skipped', p_message_id: null, p_error: 'booking_changed_or_unavailable', p_release: true });
+        if (done.error || done.data !== true) return { ...summary, error: 'booking_finish_failed' };
+        summary.skipped++;
+        continue;
+      }
+      // Never send a stale confirmation: once the booking date has passed
+      // (IST), expire the row unsent and return the day's allowance. This is
+      // also how cap overflow resolves: rows left pending past midnight are
+      // skipped here on their later claim instead of arriving late, including
+      // the second half of a customer/professional pair split at the cap
+      // boundary.
+      const istToday = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      if (String(b.date).slice(0, 10) < istToday) {
+        const done = await supabase.rpc('finish_booking_alert', { p_id: row.id, p_claim_token: row.claim_token, p_status: 'skipped', p_message_id: null, p_error: 'booking_date_passed', p_release: true });
         if (done.error || done.data !== true) return { ...summary, error: 'booking_finish_failed' };
         summary.skipped++;
         continue;
@@ -150,8 +187,9 @@ export async function dispatchBookingAlerts(supabase, deps = {}) {
             const done = await supabase.rpc('finish_booking_alert', { p_id: row.id, p_claim_token: row.claim_token, p_status: 'failed', p_message_id: null, p_error: 'meta_billing_failure', p_release: false });
             if (done.error || done.data !== true) return { ...summary, error: 'booking_finish_failed' };
             await pauseStandingBookings(supabase, 'meta_billing_failure');
+            const notified = await (deps.notifyOwner || notifyOwnerBillingPause)(deps);
             summary.failed++;
-            return { ...summary, paused: 'meta_billing_failure' };
+            return { ...summary, paused: 'meta_billing_failure', owner_notified: notified };
           }
           if (result?.simulated) {
             status = 'skipped'; error = 'simulated'; release = true;
