@@ -105,6 +105,7 @@ begin
 end $$;
 
 alter table public.booking_alert_outbox alter column pilot_armed_at set not null;
+alter table public.booking_alert_outbox drop column standing_reserved_day;
 drop table public.booking_alert_standing;
 
 revoke all on function public.expand_booking_alert_receipts(integer), public.claim_booking_alert(), public.finish_booking_alert(uuid,uuid,text,text,text,boolean) from public,anon,authenticated;
