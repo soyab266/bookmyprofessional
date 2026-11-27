@@ -134,7 +134,7 @@ export default function LoginPage() {
           </h2>
 
           <p className="text-sm text-white/80 leading-relaxed">
-            Manage your bookings, track service milestones, and experience transparent escrow-backed scheduling across India.
+            Manage your bookings, track service milestones, and experience transparent payment-protected scheduling across India.
           </p>
         </div>
 

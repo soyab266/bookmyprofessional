@@ -739,10 +739,10 @@ export default function BookingModal() {
             <div className="space-y-4">
               <div>
                 <h4 className="font-heading text-base font-bold text-dark-900">
-                  Secure Checkout & Escrow Protection
+                  Secure Checkout & Payment Protection
                 </h4>
                 <p className="text-xs text-dark-500">
-                  Your payment is held in escrow and only released after your service is completed.
+                  Your payment is held by BookMyProfessional and only released after your service is completed.
                 </p>
               </div>
 
@@ -763,7 +763,7 @@ export default function BookingModal() {
                   </p>
                 )}
                 <div className="flex items-center justify-between text-xs text-dark-600">
-                  <span>Platform Escrow Protection Fee</span>
+                  <span>Platform Fee</span>
                   <span className="text-emerald-600 font-semibold">FREE</span>
                 </div>
                 <div className="flex items-center justify-between text-xs text-dark-600">
@@ -796,14 +796,14 @@ export default function BookingModal() {
                 <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                 <div>
                   <span className="font-semibold block text-amber-950">Cancellation & Refund Policy</span>
-                  <span>Free cancellation up to 24 hours before your scheduled appointment slot. Cancellations within 24 hours are non-refundable.</span>
+                  <span>Free cancellation up to 24 hours before your scheduled appointment slot. Cancellations within 24 hours are reviewed case by case by our support team and are not automatically refunded.</span>
                 </div>
               </div>
 
               {/* Security note */}
               <div className="flex items-center gap-2 text-xs text-dark-500">
                 <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>256-bit SSL encrypted • 100% Money Back Escrow Guarantee</span>
+                <span>256-bit SSL encrypted • Secure payments via PayU</span>
               </div>
 
               {bookingError && (

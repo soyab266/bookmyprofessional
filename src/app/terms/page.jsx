@@ -5,7 +5,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessi
 
 export const metadata = {
   title: "Terms & Conditions",
-  description: "Review BookMyProfessional Terms & Conditions covering appointments, escrow payments, cancellation policies, and professional code of conduct.",
+  description: "Review BookMyProfessional Terms & Conditions covering appointments, payments, cancellation policies, and professional code of conduct.",
   alternates: {
     canonical: `${SITE_URL}/terms`,
   },
@@ -15,7 +15,7 @@ export const metadata = {
     url: `${SITE_URL}/terms`,
     siteName: "Book My Professional",
     title: "Terms & Conditions",
-    description: "BookMyProfessional's platform terms covering bookings, escrow payments, cancellations, refunds, and professional verification.",
+    description: "BookMyProfessional's platform terms covering bookings, payments, cancellations, refunds, and professional verification.",
     images: [
       {
         url: `${SITE_URL}/og-image.png`,
@@ -28,7 +28,7 @@ export const metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Terms & Conditions",
-    description: "Platform terms covering bookings, escrow payments, cancellations, and professional verification.",
+    description: "Platform terms covering bookings, payments, cancellations, and professional verification.",
     images: [`${SITE_URL}/og-image.png`],
   },
 };
@@ -47,17 +47,17 @@ const sections = [
   {
     id: "booking-scheduling",
     h: "3. Booking & Scheduling",
-    p: "Bookings are confirmed once payment is successfully captured by our escrow partner. Appointment slots are reserved on a first-come, first-served basis. Professionals retain the right to accept or decline service requests at their discretion. A declined booking is refunded in full, typically within 3 to 5 business days to the original payment method.",
+    p: "Bookings are confirmed once payment is successfully captured through PayU, our payment gateway. Appointment slots are reserved on a first-come, first-served basis. Professionals retain the right to accept or decline service requests at their discretion. A declined booking is refunded in full to the original payment method, typically within 5 to 21 days.",
   },
   {
     id: "payments-escrow-protection",
-    h: "4. Payments & Escrow Protection",
-    p: "All service payments are processed through our PCI-DSS compliant payment gateway (PayU) and held in secure escrow until service completion. Service fees are released to the professional only after the appointment is marked complete by the customer. In the event of a dispute, our resolution team mediates to ensure a fair outcome for both parties.",
+    h: "4. Payments & Payment Protection",
+    p: "All service payments are processed through our payment gateway, PayU, and held by BookMyProfessional until service completion. Service fees are released to the professional only after the appointment is marked complete. If something goes wrong, our support team reviews the case with both sides and works toward a fair outcome.",
   },
   {
     id: "cancellations-refunds",
     h: "5. Cancellations & Refunds",
-    p: "Bookings may be cancelled and rescheduled directly from your customer dashboard. Cancellations made at least 24 hours before the scheduled appointment receive a full 100% refund. Late cancellations (within 24 hours) may be subject to a partial service fee as defined in the platform's refund policy. Eligible refunds are processed to the original payment method within 5 to 7 business days.",
+    p: "Bookings may be cancelled and rescheduled directly from your customer dashboard. Cancellations made at least 24 hours before the scheduled appointment receive a full 100% refund. Cancellations within 24 hours of the appointment are reviewed case by case by our support team and are not automatically refunded. Eligible refunds are processed to the original payment method through PayU, typically within 5 to 21 days.",
   },
   {
     id: "professional-verification",
@@ -72,7 +72,7 @@ const sections = [
   {
     id: "acceptable-use",
     h: "8. Acceptable Use",
-    p: "You must not misuse the platform in any way, including submitting fake or fraudulent bookings, harassing professionals or customers, attempting to conduct transactions outside the platform to evade escrow protection or dispute resolution, requesting or performing unlawful services, or using automated scripts to access the platform. Violations may result in immediate account suspension or permanent ban.",
+    p: "You must not misuse the platform in any way, including submitting fake or fraudulent bookings, harassing professionals or customers, attempting to conduct transactions outside the platform to evade payment protection or support processes, requesting or performing unlawful services, or using automated scripts to access the platform. Violations may result in immediate account suspension or permanent ban.",
   },
   {
     id: "limitation-of-liability",

@@ -40,7 +40,7 @@ const sections = [
   },
   {
     h: "2. How We Use Your Information",
-    p: "Your data is used to match customers with the most relevant verified professionals, process and confirm bookings, facilitate escrow-backed payments, and send appointment notifications via email and WhatsApp. We use aggregate, anonymised data to improve our matching algorithms and service recommendations. We do not sell, rent, or share your personal information with third-party advertisers.",
+    p: "Your data is used to match customers with the most relevant verified professionals, process and confirm bookings, facilitate secure payments, and send appointment notifications via email and WhatsApp. We use aggregate, anonymised data to improve our matching algorithms and service recommendations. We do not sell, rent, or share your personal information with third-party advertisers.",
   },
   {
     h: "3. Payment Security",

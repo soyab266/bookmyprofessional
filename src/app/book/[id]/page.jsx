@@ -763,7 +763,7 @@ function BookingPageContent({ params }) {
                           <span className="font-semibold text-dark-900">{formatMoney(servicePrice)}</span>
                         </div>
                         <div className="flex justify-between text-dark-600">
-                          <span>Platform & Escrow Protection</span>
+                          <span>Platform & Payment Protection</span>
                           <span className="text-emerald-600 font-semibold">FREE</span>
                         </div>
                         <div className="flex justify-between text-dark-600">
@@ -784,7 +784,7 @@ function BookingPageContent({ params }) {
                         <span>24-Hour Cancellation Policy</span>
                       </div>
                       <p className="leading-relaxed">
-                        You can cancel your appointment for a <strong>100% full refund</strong> up to <strong>24 hours</strong> prior to the scheduled slot time. Inside 24 hours of the appointment, cancellations cannot be made and are non-refundable.
+                        You can cancel your appointment for a <strong>100% full refund</strong> up to <strong>24 hours</strong> prior to the scheduled slot time. Inside 24 hours of the appointment, contact our support team; requests in this window are reviewed case by case and are not automatically refunded.
                       </p>
                     </div>
                   </div>
@@ -795,10 +795,10 @@ function BookingPageContent({ params }) {
                   <div className="space-y-6">
                     <div>
                       <h2 className="font-heading text-xl font-bold text-dark-900">
-                        Step 4: Secure Escrow Payment
+                        Step 4: Secure Payment
                       </h2>
                       <p className="text-xs text-dark-500 mt-1">
-                        Your payment is held in escrow and released only after service fulfillment.
+                        Your payment is held by BookMyProfessional and released only after service fulfillment.
                       </p>
                     </div>
 
@@ -833,13 +833,13 @@ function BookingPageContent({ params }) {
                       <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
                       <div>
                         <span className="font-semibold block text-amber-950">24-Hour Cancellation & Refund Policy</span>
-                        <span>Free cancellation up to 24 hours before your scheduled appointment slot. Cancellations within 24 hours are non-refundable.</span>
+                        <span>Free cancellation up to 24 hours before your scheduled appointment slot. Cancellations within 24 hours are reviewed case by case by our support team and are not automatically refunded.</span>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-2 text-xs text-dark-500 font-medium">
                       <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                      <span>256-bit SSL encrypted • 100% Escrow Protection Guarantee</span>
+                      <span>256-bit SSL encrypted • Secure payments via PayU</span>
                     </div>
 
                     {paymentError && (
@@ -972,7 +972,7 @@ function BookingPageContent({ params }) {
                         {isProcessingPayment ? (
                           <div className="flex items-center gap-2">
                             <div className="h-4 w-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            <span>Securing Escrow Payment...</span>
+                            <span>Securing Payment...</span>
                           </div>
                         ) : (
                           <div className="flex items-center gap-1.5">
@@ -1060,7 +1060,7 @@ function BookingPageContent({ params }) {
                     <span className="font-semibold text-dark-900">{formatMoney(servicePrice)}</span>
                   </div>
                   <div className="flex justify-between text-dark-600">
-                    <span>Platform & Escrow Fee</span>
+                    <span>Platform Fee</span>
                     <span className="text-emerald-600 font-semibold">FREE</span>
                   </div>
                   <div className="flex justify-between text-dark-600">
@@ -1074,7 +1074,7 @@ function BookingPageContent({ params }) {
                 </div>
 
                 <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-[11px] text-emerald-800 leading-relaxed">
-                  ✓ Protected by Escrow. Money is held securely until you confirm the work is completed.
+                  ✓ Payment protection. Money is held by BookMyProfessional until the work is completed.
                 </div>
               </div>
             </div>

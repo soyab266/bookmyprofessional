@@ -1074,7 +1074,7 @@ export default function VendorPortalPage() {
                         {formatMoney(stats.commission)}
                       </span>
                       <span className="text-xs text-dark-400 mt-1 block">
-                        Standard escrow commission
+                        Standard commission
                       </span>
                     </div>
 
@@ -1433,7 +1433,7 @@ export default function VendorPortalPage() {
                             <span className="font-bold text-emerald-700 text-sm block mt-0.5">
                               {formatMoney((b.servicePrice * 0.9))}
                             </span>
-                            <span className="text-dark-400 text-[10px]">Held securely in escrow</span>
+                            <span className="text-dark-400 text-[10px]">Held securely until completion</span>
                           </div>
                         </div>
 
@@ -1481,7 +1481,7 @@ export default function VendorPortalPage() {
                                 onClick={() => handleStatusChange(b.id, "completed")}
                                 className="py-2 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs"
                               >
-                                <Check className="w-3.5 h-3.5" /> Mark Completed & Release Escrow
+                                <Check className="w-3.5 h-3.5" /> Mark Completed & Release Payment
                               </button>
                             )}
                             {b.status === "completed" && (

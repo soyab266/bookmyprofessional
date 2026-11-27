@@ -1056,7 +1056,7 @@ export default function CustomerDashboardPage() {
                                 }`}
                               >
                                 {b.paymentStatus === "paid"
-                                  ? "Paid (Escrow)"
+                                  ? "Paid (Held)"
                                   : b.paymentStatus === "refunded"
                                   ? "Refunded"
                                   : b.status === "cancelled" && Number(b.totalPaid) > 0 && b.paymentStatus !== "unpaid"

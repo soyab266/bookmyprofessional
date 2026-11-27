@@ -580,10 +580,10 @@ export default function ProfessionalDetailPage({ params }) {
                     <ShieldCheck className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
                     <div>
                       <h4 className="font-heading text-xs sm:text-sm font-bold text-emerald-900">
-                        BookMyProfessional Escrow & Rematching Protection
+                        BookMyProfessional Payment Protection
                       </h4>
                       <p className="text-xs text-emerald-800/80 mt-1 leading-relaxed">
-                        Your payment is held safely in escrow and only released once your service is fulfilled. Free cancellation up to 24h prior to appointment.
+                        Your payment is held safely by BookMyProfessional and only released once your service is fulfilled. Free cancellation up to 24h prior to appointment.
                       </p>
                     </div>
                   </div>
@@ -918,7 +918,7 @@ export default function ProfessionalDetailPage({ params }) {
                   </div>
 
                   <div className="flex items-center justify-between">
-                    <span className="text-dark-600">Escrow Protected:</span>
+                    <span className="text-dark-600">Payment Protected:</span>
                     <span className="font-bold text-emerald-700">100% Guaranteed</span>
                   </div>
                 </div>

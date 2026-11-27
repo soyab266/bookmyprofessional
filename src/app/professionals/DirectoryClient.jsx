@@ -56,7 +56,7 @@ export default function BrowseProfessionalsPage({ initialDirectory }) {
                 <CreditCard className="w-4 h-4" />
               </div>
               <div>
-                <p className="font-heading text-xs font-bold text-dark-900">Escrow Protected</p>
+                <p className="font-heading text-xs font-bold text-dark-900">Payment Protected</p>
                 <p className="text-[11px] text-dark-500 mt-0.5 leading-snug">Pay only when service is complete</p>
               </div>
             </div>
@@ -109,10 +109,10 @@ export default function BrowseProfessionalsPage({ initialDirectory }) {
 
               <div className="p-5 rounded-2xl bg-dark-50/70 border border-border/80 space-y-2">
                 <h3 className="font-heading text-sm font-bold text-dark-900">
-                  How does escrow payment protection work?
+                  How does payment protection work?
                 </h3>
                 <p className="text-xs text-dark-600 leading-relaxed">
-                  When you schedule an appointment, your payment is held securely in escrow. Funds are only transferred to the expert after your service milestone is completed and satisfied.
+                  When you schedule an appointment, your payment is held securely by BookMyProfessional. Funds are only transferred to the expert after your service milestone is completed and satisfied.
                 </p>
               </div>
 
