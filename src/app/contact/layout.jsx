@@ -2,7 +2,7 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "https://www.bookmyprofessi
 
 export const metadata = {
   title: "Contact Support & Office Address",
-  description: "Get in touch with BookMyProfessional support for booking assistance, verification queries, or business partnerships. Our team responds within 24 hours.",
+  description: "Get in touch with BookMyProfessional support for booking assistance, verification queries, or business partnerships. Our team replies within 2 business hours (Mon to Sat, 9 AM to 6 PM IST).",
   alternates: {
     canonical: `${SITE_URL}/contact`,
   },
@@ -12,7 +12,7 @@ export const metadata = {
     url: `${SITE_URL}/contact`,
     siteName: "Book My Professional",
     title: "Contact Us",
-    description: "Reach out to our support team for booking help, verification queries, or business partnerships. We respond within 24 hours.",
+    description: "Reach out to our support team for booking help, verification queries, or business partnerships. We reply within 2 business hours (Mon to Sat, 9 AM to 6 PM IST).",
     images: [
       {
         url: `${SITE_URL}/og-image.png`,
