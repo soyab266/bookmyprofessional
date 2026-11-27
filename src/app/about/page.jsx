@@ -65,8 +65,8 @@ export default function AboutPage() {
     },
     {
       icon: Lock,
-      title: "Financial Security (Escrow)",
-      desc: "Client funds stay secure in escrow until the customer signs off on the completed work. Transparent pricing with zero hidden fees.",
+      title: "Financial Security",
+      desc: "Client funds stay held by BookMyProfessional until the customer signs off on the completed work. Transparent pricing with zero hidden fees.",
       color: "text-primary-600 bg-primary-50 border-primary-200",
     },
     {
@@ -93,7 +93,7 @@ export default function AboutPage() {
     {
       name: "Marcus Becker",
       role: "Chief Technology Officer",
-      bio: "Pioneered automated escrow infrastructure and AI matching engines with a focus on trust and real-time reliability.",
+      bio: "Pioneered automated payment-hold infrastructure and AI matching engines with a focus on trust and real-time reliability.",
       image: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400&auto=format&fit=crop&q=80",
     },
     {
@@ -208,13 +208,13 @@ export default function AboutPage() {
                   Finding a dependable electrician in an emergency, an empathetic general physician for a quick consultation, or a seasoned tutor for your children used to involve hours of uncertain calls, unvetted recommendations, and opaque pricing.
                 </p>
                 <p className="mt-3 text-xs sm:text-sm text-dark-600 leading-relaxed">
-                  We engineered BookMyProfessional to change that entirely. By holding service providers to strict verification standards and protecting every single rupee via milestone escrow, we foster genuine trust in the gig and service economy.
+                  We engineered BookMyProfessional to change that entirely. By holding service providers to strict verification standards and protecting every single rupee by holding payments until the customer signs off, we foster genuine trust in the gig and service economy.
                 </p>
 
                 <div className="mt-6 space-y-3">
                   {[
                     "Every professional verified through multi-tier ID and criminal history screening",
-                    "Fair, transparent pricing with guaranteed milestone escrow protection",
+                    "Fair, transparent pricing with milestone payment protection",
                     "Immediate scheduling sync with real-time calendar availability",
                     "Built-in customer review feature on every profile",
                   ].map((item, i) => (
