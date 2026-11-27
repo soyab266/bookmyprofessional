@@ -441,7 +441,7 @@ export default function HomePage() {
     },
     {
       icon: Lock,
-      title: "Milestone Escrow Protection",
+      title: "Milestone Payment Protection",
       desc: "Payments are held securely and released only when deliverables meet your agreed milestones.",
       tag: "Protection",
     },
@@ -473,7 +473,7 @@ export default function HomePage() {
     {
       step: "03",
       title: "Book & Collaborate",
-      desc: "Schedule sessions with integrated video calls, escrow payments, and tracking tools.",
+      desc: "Schedule sessions with integrated video calls, protected payments, and tracking tools.",
     },
   ];
 
