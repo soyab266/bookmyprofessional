@@ -14,7 +14,6 @@ import {
   ShieldCheck,
   CheckCircle2,
   ChevronRight,
-  ChevronDown,
   Sparkles,
   HelpCircle,
   FileText,
@@ -57,7 +56,6 @@ export default function ContactPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
   const [submittedTicket, setSubmittedTicket] = useState(null);
-  const [expandedFaq, setExpandedFaq] = useState(0);
   const [selectedCity, setSelectedCity] = useState("mumbai");
 
   const cityHubs = [
@@ -70,7 +68,7 @@ export default function ContactPage() {
       email: "hq@bookmyprofessional.com",
       transit: "Metro Bandra Kurla Complex (Line 3) – 2 min walk",
       parking: "Basement parking available at BKC",
-      hours: "Mon – Fri: 09:00 – 20:00 IST",
+      hours: "Mon – Sat: 09:00 – 18:00 IST",
     },
     {
       id: "delhi",
@@ -81,7 +79,7 @@ export default function ContactPage() {
       email: "delhi@bookmyprofessional.com",
       transit: "Metro Connaught Place (Blue Line) – 3 min walk",
       parking: "Paid parking at Palika Parking (5 min walk)",
-      hours: "Mon – Fri: 09:00 – 18:00 IST",
+      hours: "Mon – Sat: 09:00 – 18:00 IST",
     },
     {
       id: "hyderabad",
@@ -92,7 +90,7 @@ export default function ContactPage() {
       email: "hyderabad@bookmyprofessional.com",
       transit: "Metro Banjara Hills (Line 1) – direct station exit",
       parking: "Basement parking, Banjara Hills",
-      hours: "Mon – Fri: 09:30 – 18:30 IST",
+      hours: "Mon – Sat: 09:00 – 18:00 IST",
     },
     {
       id: "bangalore",
@@ -103,7 +101,7 @@ export default function ContactPage() {
       email: "bangalore@bookmyprofessional.com",
       transit: "Metro MG Road (Purple Line) – 4 min walk",
       parking: "Paid parking, MG Road",
-      hours: "Mon – Fri: 09:00 – 18:00 IST",
+      hours: "Mon – Sat: 09:00 – 18:00 IST",
     },
   ];
 
@@ -124,7 +122,7 @@ export default function ContactPage() {
       title: "Email Support Desk",
       details: "support@bookmyprofessional.com",
       subtext: "Average reply within 2 business hours",
-      badge: "24/7 Inbox",
+      badge: "Mon - Sat, 9 - 6 IST",
       actionText: "Send Email",
       href: "mailto:support@bookmyprofessional.com",
     },
@@ -141,24 +139,24 @@ export default function ContactPage() {
 
   const faqs = [
     {
-      q: "How does the Escrow Payment protection work?",
-      a: "When you book a service, your payment is held securely in our licensed escrow account. Funds are released to the professional only after the appointment is successfully completed and you confirm your satisfaction.",
+      q: "How does payment protection work?",
+      a: "When you book a service, your payment is collected through PayU, our payment gateway. BookMyProfessional holds the payment and releases it to the professional after your service is completed. If a booking is cancelled within the cancellation window, the refund goes back to your original payment method.",
     },
     {
-      q: "How are professionals vetted and background checked?",
-      a: "Every service provider submits government-issued photo identification, relevant trade certifications or university degrees, proof of business insurance, and undergoes criminal record verification before receiving approval.",
+      q: "How are professionals verified?",
+      a: "Professionals upload documents such as a government ID, license or degree from their vendor portal. Our team reviews each submitted document, and a profile is listed publicly only after that review is complete.",
     },
     {
       q: "What is the cancellation and refund policy?",
-      a: "You can cancel free of charge up to 24 hours before your scheduled appointment for an instant 100% refund. For cancellations within 24 hours, emergency reschedule options or partial refunds apply depending on the pro's policy.",
+      a: "You can cancel from your customer dashboard up to 24 hours before your scheduled appointment for a full 100% refund. Inside 24 hours, online cancellation is not available; our support team reviews those requests case by case, and a refund is not automatic.",
     },
     {
       q: "How do I register as a professional service provider?",
-      a: "Click 'Join as a Professional' in our menu or navigate to the Vendor Portal. Complete your profile, upload your documents, set your hourly/service pricing, and our verification team will review your application within 24 hours.",
+      a: "Click 'Join as a Professional' in our menu or navigate to the Vendor Portal. Complete your profile, upload your documents, set your pricing, and our team reviews your application before your profile goes live.",
     },
     {
       q: "What if I am not satisfied with the delivered service?",
-      a: "We offer a 100% Satisfaction Guarantee. Simply open a dispute ticket from your Customer Dashboard within 48 hours of service completion, and our dispute concierge will mediate rematching or a full escrow refund.",
+      a: "Contact our support team through this page, by email at support@bookmyprofessional.com or by phone (Mon to Sat, 9 AM to 6 PM IST). Our team reviews the booking with you and the professional and works toward a fair outcome.",
     },
   ];
 
@@ -228,7 +226,7 @@ export default function ContactPage() {
             <div className="inline-flex items-center gap-2 rounded-full border border-primary-200 bg-surface px-3.5 py-1 shadow-xs mb-4">
               <Headphones className="h-4 w-4 text-primary-600" />
               <span className="text-xs font-semibold text-primary-700">
-                24/7 Dedicated Support Concierge
+                Dedicated Support, Mon to Sat 9 AM - 6 PM IST
               </span>
             </div>
 
@@ -237,7 +235,7 @@ export default function ContactPage() {
             </h1>
 
             <p className="mt-3.5 text-xs sm:text-sm sm:text-base text-dark-600 max-w-xl mx-auto leading-relaxed">
-              Have questions about booking an expert, professional onboarding, or escrow transactions? Our team is always ready to assist you.
+              Have questions about booking an expert, professional onboarding, or payments? Our team is ready to assist you.
             </p>
           </div>
         </section>
@@ -302,7 +300,7 @@ export default function ContactPage() {
                       Send Us a Message
                     </h2>
                     <p className="text-xs sm:text-sm text-dark-600 mt-1">
-                      Fill out the form below and an assigned concierge specialist will reach out within 2 hours.
+                      Fill out the form below and an assigned concierge specialist will reach out within 2 business hours (Mon to Sat, 9 AM to 6 PM IST).
                     </p>
                   </div>
 
@@ -392,7 +390,7 @@ export default function ContactPage() {
                           >
                             <option value="customer_support">Customer Booking Support</option>
                             <option value="vendor_onboarding">Professional Vendor Partner</option>
-                            <option value="escrow_billing">Escrow Payment & Billing</option>
+                            <option value="escrow_billing">Payment & Billing</option>
                             <option value="dispute">Dispute or Quality Feedback</option>
                             <option value="general">General Partnership Inquiry</option>
                           </select>
@@ -461,7 +459,7 @@ export default function ContactPage() {
                       <h3 className="font-heading text-base font-bold text-dark-900">
                         Operational Hours
                       </h3>
-                      <p className="text-xs text-dark-500">Live assistance & emergency support</p>
+                      <p className="text-xs text-dark-500">Live assistance during support hours</p>
                     </div>
                   </div>
 
@@ -480,7 +478,7 @@ export default function ContactPage() {
                     </div>
                     <div className="flex justify-between">
                       <span className="font-medium">Public Holidays</span>
-                      <span className="font-semibold text-primary-600">On-Call Emergency</span>
+                      <span className="font-semibold text-dark-900">Hours may vary</span>
                     </div>
                   </div>
                 </div>
@@ -493,11 +491,11 @@ export default function ContactPage() {
                       <h3 className="font-heading text-base font-bold text-dark-900">
                         The Trust Guarantee
                       </h3>
-                      <p className="text-xs text-dark-500">100% Escrow Protection on all bookings</p>
+                      <p className="text-xs text-dark-500">Payment protection on all bookings</p>
                     </div>
                   </div>
                   <p className="text-xs text-dark-600 leading-relaxed">
-                    All financial transactions are protected by Indian escrow regulations. If a service provider does not arrive or work doesn't match standards, your payment is promptly refunded.
+                    All payments are processed through PayU and held by BookMyProfessional until the service is completed. If a booking cannot be served, our support team arranges a refund to your original payment method.
                   </p>
                 </div>
 
@@ -693,35 +691,19 @@ export default function ContactPage() {
 
             <div className="space-y-3">
               {faqs.map((faq, index) => {
-                const isOpen = expandedFaq === index;
                 return (
                   <div
                     key={index}
-                    className={`rounded-2xl border transition-all duration-200 overflow-hidden ${
-                      isOpen
-                        ? "bg-surface border-primary-300 shadow-soft"
-                        : "bg-surface border-border hover:border-dark-300 shadow-xs"
-                    }`}
+                    className="rounded-2xl border transition-all duration-200 overflow-hidden bg-surface border-border shadow-xs"
                   >
-                    <button
-                      type="button"
-                      onClick={() => setExpandedFaq(isOpen ? -1 : index)}
-                      className="w-full flex items-center justify-between p-5 text-left focus:outline-none"
-                    >
+                    <div className="w-full p-5 text-left">
                       <span className="font-heading text-sm sm:text-base font-bold text-dark-900 pr-4">
                         {faq.q}
                       </span>
-                      <ChevronDown
-                        className={`w-4 h-4 text-dark-500 shrink-0 transition-transform duration-200 ${
-                          isOpen ? "rotate-180 text-primary-600" : ""
-                        }`}
-                      />
-                    </button>
-                    {isOpen && (
-                      <div className="px-5 pb-5 pt-0 text-xs sm:text-sm text-dark-600 leading-relaxed border-t border-border/60 mt-1 animate-in fade-in duration-150">
-                        <p className="pt-3">{faq.a}</p>
-                      </div>
-                    )}
+                    </div>
+                    <div className="px-5 pb-5 pt-0 text-xs sm:text-sm text-dark-600 leading-relaxed border-t border-border/60 mt-1">
+                      <p className="pt-3">{faq.a}</p>
+                    </div>
                   </div>
                 );
               })}
@@ -810,7 +792,7 @@ export default function ContactPage() {
             <div>
               <h3 className="font-heading text-sm font-bold text-white mb-3">Support Hotline</h3>
               <p className="text-xs text-white/70 mb-1">
-                Emergency Support Line:
+                Support Line:
               </p>
               <p className="text-xs font-semibold text-primary-400">
                 +91 89193 28705
