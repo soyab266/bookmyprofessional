@@ -328,8 +328,7 @@ export default function HowItWorks() {
                 Book a <span className="text-primary-500">Trusted Professional</span> Today
               </h2>
               <p className="mx-auto mt-3 max-w-xl text-sm leading-relaxed text-dark-600 sm:text-base">
-                Join thousands of happy customers who found the right professionals for their
-                needs.
+                Find the right professional for your needs and book online.
               </p>
               <Link
                 href="/professionals"
@@ -354,14 +353,8 @@ export default function HowItWorks() {
                   />
                 ))}
               </div>
-              <div className="flex items-center gap-0.5 text-amber-400" aria-label="Rated 4.8 out of 5">
-                {Array.from({ length: 5 }).map((_, i) => (
-                  <Star key={i} className="h-3.5 w-3.5 fill-current" />
-                ))}
-              </div>
               <p className="text-xs text-dark-600 sm:text-sm">
-                <span className="font-bold text-dark-900">4.8+</span> rating from{" "}
-                <span className="font-bold text-dark-900">10,000+</span> customers
+                Upfront pricing on every profile.
               </p>
             </div>
           </div>
