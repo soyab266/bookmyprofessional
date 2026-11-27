@@ -466,18 +466,28 @@ export default function AboutPage() {
               <h3 className="font-heading text-sm font-bold text-white mb-3">Legal & Safety</h3>
               <ul className="space-y-2 text-xs text-white/70">
                 <li>
-                  <Link href="/about" className="hover:text-white transition-colors">
-                    Escrow Protection
+                  <Link href="/terms" className="hover:text-white transition-colors">
+                    Terms & Conditions
                   </Link>
                 </li>
                 <li>
-                  <Link href="/about" className="hover:text-white transition-colors">
+                  <Link href="/privacy" className="hover:text-white transition-colors">
+                    Privacy Policy
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/refund" className="hover:text-white transition-colors">
+                    Refund & Cancellation
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/terms#payments-escrow-protection" className="hover:text-white transition-colors">
+                    Payment Protection
+                  </Link>
+                </li>
+                <li>
+                  <Link href="/terms#professional-verification" className="hover:text-white transition-colors">
                     Verification Standard
-                  </Link>
-                </li>
-                <li>
-                  <Link href="/contact" className="hover:text-white transition-colors">
-                    Terms & Privacy
                   </Link>
                 </li>
               </ul>
