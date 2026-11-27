@@ -300,7 +300,7 @@ export default function RegisterPage() {
           <p className="text-sm text-white/80 leading-relaxed">
             {authRole === "professional"
               ? "Earn top market rates, manage your weekly availability, and receive guaranteed milestone payouts straight to your bank account."
-              : "Compare prices, schedule in-person or remote consultations, and enjoy guaranteed escrow protection for every booking."}
+              : "Compare prices, schedule in-person or remote consultations, and enjoy payment protection for every booking."}
           </p>
         </div>
 
