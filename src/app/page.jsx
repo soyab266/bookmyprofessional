@@ -1675,6 +1675,11 @@ export default function HomePage() {
                     Privacy Policy
                   </Link>
                 </li>
+                <li>
+                  <Link href="/refund" className="hover:text-white transition-colors">
+                    Refund & Cancellation
+                  </Link>
+                </li>
               </ul>
             </div>
 
