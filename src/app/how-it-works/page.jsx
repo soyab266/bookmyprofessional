@@ -63,10 +63,10 @@ export default function HowItWorksPage() {
                   02
                 </div>
                 <h2 className="font-heading text-lg font-bold text-dark-900 mb-2">
-                  Guaranteed Escrow Protection
+                  Payment Protection
                 </h2>
                 <p className="text-xs sm:text-sm text-dark-600 leading-relaxed">
-                  Your payment is securely held in escrow via PayU. The professional is only paid once the service is delivered and marked complete, giving you peace of mind and complete financial security.
+                  Your payment is securely held by BookMyProfessional via PayU. The professional is only paid once the service is delivered and marked complete, giving you peace of mind.
                 </p>
               </div>
 
@@ -132,10 +132,10 @@ export default function HowItWorksPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div className="bg-background p-5 rounded-xl border border-border space-y-2">
                   <h3 className="font-semibold text-dark-900 text-sm">
-                    How does the escrow payment guarantee protect me?
+                    How does payment protection protect me?
                   </h3>
                   <p className="text-xs text-dark-600 leading-relaxed">
-                    When you book an appointment, your payment is held safely by our escrow partner. The service professional does not receive payment until the service has been marked complete by you.
+                    When you book an appointment, your payment is held safely by BookMyProfessional. The service professional does not receive payment until the service has been marked complete.
                   </p>
                 </div>
 
