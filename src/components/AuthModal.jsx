@@ -329,7 +329,7 @@ export default function AuthModal() {
                   ? "Reset your account password"
                   : authModalTab === "login"
                   ? "Welcome back! Please enter your details to sign in."
-                  : "Join thousands of clients & top verified experts today."}
+                  : "Join BookMyProfessional as a client or a verified professional."}
               </p>
             </div>
 

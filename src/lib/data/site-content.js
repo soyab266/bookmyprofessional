@@ -4,17 +4,18 @@ import { cached } from "@/lib/data/cache";
 // Marketing numbers shown on the home banner and the About page. Admin edits these in Settings.
 export const DEFAULT_MARKETING = {
   home: [
-    { value: "10,000+", label: "Verified Professionals" },
-    { value: "50,000+", label: "Happy Customers" },
-    { value: "100+", label: "Service Categories" },
-    { value: "4.8/5", label: "Average Rating" },
+    { value: "Free", label: "Customer Signup" },
+    { value: "Verified", label: "Professional Profiles" },
+    { value: "Upfront", label: "Pricing" },
+    { value: "Online", label: "Booking & Payment" },
   ],
   about: [
-    { value: "15,000+", label: "Verified Professionals", detail: "Across 20+ specialized disciplines" },
-    { value: "120,000+", label: "Completed Appointments", detail: "Safely managed with escrow protection" },
-    { value: "98.4%", label: "Satisfaction Rate", detail: "Rated 4.8+ stars by verified clients" },
-    { value: "45 mins", label: "Avg. Response Time", detail: "Rapid chat & consultation turnaround" },
+    { value: "Free", label: "Customer Signup", detail: "Create a customer account" },
+    { value: "Verified", label: "Professional Profiles", detail: "Verification required before listing" },
+    { value: "Upfront", label: "Pricing", detail: "Rates shown on profiles before booking" },
+    { value: "Online", label: "Booking & Payment", detail: "Book and pay through the site" },
   ],
+  // Unused: no page renders ctaCustomers anymore; kept only because admin Settings still writes this key.
   ctaCustomers: "50,000",
 };
 

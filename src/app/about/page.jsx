@@ -50,19 +50,9 @@ export default function AboutPage() {
       desc: "Founded with the mission to eliminate friction in finding certified home, health, and tech professionals across India.",
     },
     {
-      year: "2023",
-      title: "10,000+ Verified Experts",
-      desc: "Expanded across 15 major cities, rolling out our proprietary multi-tier background check and Escrow Milestone payment system.",
-    },
-    {
       year: "2024",
       title: "AI-Powered Matching",
       desc: "Introduced smart matching algorithms, instant vendor payouts, and verified client review integrity verification.",
-    },
-    {
-      year: "2026",
-      title: "India's Trusted Hub",
-      desc: "Over 120,000 completed appointments with a 98.4% customer satisfaction score and round-the-clock dispute concierge.",
     },
   ];
 
@@ -226,7 +216,7 @@ export default function AboutPage() {
                     "Every professional verified through multi-tier ID and criminal history screening",
                     "Fair, transparent pricing with guaranteed milestone escrow protection",
                     "Immediate scheduling sync with real-time calendar availability",
-                    "100% verified customer ratings from actual completed bookings",
+                    "Built-in customer review feature on every profile",
                   ].map((item, i) => (
                     <div key={i} className="flex items-start gap-2.5 text-xs sm:text-sm text-dark-800">
                       <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
@@ -253,7 +243,7 @@ export default function AboutPage() {
                       Skilled People. Better Living.
                     </p>
                     <p className="text-xs text-white/80 mt-1">
-                      Connecting thousands of households and businesses with reliable local experts daily.
+                      Connecting households and businesses with reliable local experts across India.
                     </p>
                   </div>
                 </div>
@@ -326,7 +316,7 @@ export default function AboutPage() {
               </h2>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 relative">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 relative">
               {milestones.map((m, idx) => (
                 <div
                   key={idx}
@@ -406,7 +396,7 @@ export default function AboutPage() {
               Ready to Experience Better Service?
             </h2>
             <p className="mt-3 text-xs sm:text-sm sm:text-base text-white/80 max-w-xl mx-auto">
-              Join over {marketing.ctaCustomers} customers who trust BookMyProfessional for their daily and professional requirements.
+              Create a free account and book verified professionals for your daily and professional requirements.
             </p>
             <div className="mt-7 flex flex-wrap items-center justify-center gap-3.5">
               <Link
