@@ -1069,7 +1069,7 @@ export default function HomePage() {
             {/* 4 Stats in row / grid */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-6 sm:gap-8 lg:gap-12 w-full lg:w-auto flex-1 py-12 justify-items-center">
                 
-                {/* Stat 1: 10,000+ Verified Professionals */}
+                {/* Stat 1: Customer Signup */}
                 <div className="flex items-center gap-3.5">
                   <div className="w-13 h-13 sm:w-14 sm:h-14 rounded-full border-2 border-[#D4A359] bg-[#D4A359]/15 flex items-center justify-center text-[#E8C27B] shrink-0 shadow-sm">
                     <UserCheck className="w-6 h-6 sm:w-7 sm:h-7 stroke-[1.8]" />
@@ -1084,7 +1084,7 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {/* Stat 2: 50,000+ Happy Customers */}
+                {/* Stat 2: Professional Profiles */}
                 <div className="flex items-center gap-3.5">
                   <div className="w-13 h-13 sm:w-14 sm:h-14 rounded-full border-2 border-[#D4A359] bg-[#D4A359]/15 flex items-center justify-center text-[#E8C27B] shrink-0 shadow-sm">
                     <Shield className="w-6 h-6 sm:w-7 sm:h-7 stroke-[1.8]" />
@@ -1099,7 +1099,7 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {/* Stat 3: 100+ Service Categories */}
+                {/* Stat 3: Pricing */}
                 <div className="flex items-center gap-3.5">
                   <div className="w-13 h-13 sm:w-14 sm:h-14 rounded-full border-2 border-[#D4A359] bg-[#D4A359]/15 flex items-center justify-center text-[#E8C27B] shrink-0 shadow-sm">
                     <Layers className="w-6 h-6 sm:w-7 sm:h-7 stroke-[1.8]" />
@@ -1114,7 +1114,7 @@ export default function HomePage() {
                   </div>
                 </div>
 
-                {/* Stat 4: 4.8/5 Average Rating */}
+                {/* Stat 4: Booking & Payment */}
                 <div className="flex items-center gap-3.5">
                   <div className="w-13 h-13 sm:w-14 sm:h-14 rounded-full border-2 border-[#D4A359] bg-[#D4A359]/15 flex items-center justify-center text-[#E8C27B] shrink-0 shadow-sm">
                     <Star className="w-6 h-6 sm:w-7 sm:h-7 stroke-[1.8] fill-none" />
@@ -1489,7 +1489,7 @@ export default function HomePage() {
 
               {/* Subheadline description */}
               <p className="mt-3 text-sm sm:text-base md:text-lg text-white/90 font-normal max-w-xl drop-shadow-sm">
-                Join thousands of happy customers today.
+                Create a free account and book your first professional today.
               </p>
 
               {/* CTA Buttons */}
